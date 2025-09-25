@@ -2,7 +2,7 @@
 import pool from '../../db.js';
 import { getPerformanceData } from './dataFetcher.js';
 import { evaluateBidAdjustmentRule, evaluateSearchTermAutomationRule, evaluateBudgetAccelerationRule, evaluateSbSdBidAdjustmentRule, evaluatePriceAdjustmentRule } from './evaluators.js';
-import { isRuleDue, logAction } from './utils.js';
+import { isRuleDue, logAction, getLocalDateString } from './utils.js';
 import { amazonAdsApiRequest } from '../../helpers/amazon-api.js';
 
 // Define a constant for Amazon's reporting timezone to ensure consistency.
@@ -135,5 +135,64 @@ export const checkAndRunDueRules = async () => {
 };
 
 export const resetBudgets = async () => {
-    // ... [Implementation for Budget Reset remains the same] ...
+    const todayStr = getLocalDateString(REPORTING_TIMEZONE);
+    console.log(`[BudgetReset]  resetting budgets for date: ${todayStr}`);
+
+    try {
+        const { rows: budgetsToReset } = await pool.query(
+            `SELECT * FROM daily_budget_overrides WHERE override_date = $1 AND reverted_at IS NULL`,
+            [todayStr]
+        );
+
+        if (budgetsToReset.length === 0) {
+            console.log('[BudgetReset] No budgets to reset today.');
+            return;
+        }
+
+        console.log(`[BudgetReset] Found ${budgetsToReset.length} campaign budget(s) to reset.`);
+
+        // Find the profileId from the first active rule. This is acceptable
+        // because all rules within one app instance currently share the same profile.
+        const profileResult = await pool.query(
+            `SELECT profile_id FROM automation_rules WHERE is_active = TRUE LIMIT 1`
+        );
+        if (profileResult.rows.length === 0) {
+            console.error('[BudgetReset] Cannot reset budgets: No active rules found to determine profile ID.');
+            return;
+        }
+        const profileId = profileResult.rows[0].profile_id;
+
+        const updates = budgetsToReset.map(row => ({
+            campaignId: String(row.campaign_id),
+            // The API expects the budget amount inside a nested 'budget' object for SP campaigns.
+            budget: {
+                budget: parseFloat(row.original_budget),
+                budgetType: 'DAILY'
+            }
+        }));
+
+        await amazonAdsApiRequest({
+            method: 'put',
+            url: '/sp/campaigns',
+            profileId,
+            data: { campaigns: updates },
+            headers: {
+                'Content-Type': 'application/vnd.spCampaign.v3+json',
+                'Accept': 'application/vnd.spCampaign.v3+json'
+            },
+        });
+
+        console.log(`[BudgetReset] Successfully sent API request to reset ${updates.length} budgets.`);
+
+        const campaignIdsReset = budgetsToReset.map(row => row.campaign_id);
+        await pool.query(
+            `UPDATE daily_budget_overrides SET reverted_at = NOW() WHERE campaign_id = ANY($1::bigint[]) AND override_date = $2`,
+            [campaignIdsReset, todayStr]
+        );
+        
+        console.log(`[BudgetReset] Database updated to mark budgets as reverted.`);
+
+    } catch (error) {
+        console.error('[BudgetReset] CRITICAL ERROR during budget reset process:', error.details || error.message);
+    }
 };
