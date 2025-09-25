@@ -1,0 +1,63 @@
+# Đây là file cấu hình Nginx cuối cùng SAU KHI Certbot đã chạy VÀ bạn đã thêm Basic Auth
+# File này dùng để tham khảo cho Hướng dẫn 5 (Basic Auth) và Hướng dẫn 6 (SSL).
+
+# Khối server cho HTTPS (cổng 443) do Certbot tạo và được chúng ta sửa đổi
+server {
+    # Certbot đã thay đổi cổng này sang 443 và thêm 'ssl'
+    listen 443 ssl;
+    listen [::]:443 ssl;
+
+    # Tên miền của bạn
+    server_name ditavn.tababyco.com;
+
+    # --- CÁC DÒNG SSL DO CERTBOT TỰ ĐỘNG THÊM VÀO ---
+    ssl_certificate /etc/letsencrypt/live/ditavn.tababyco.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ditavn.tababyco.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+    # --------------------------------------------------
+
+    # Đường dẫn đến thư mục build của frontend
+    root /var/www/Ditavn-Ads-Auto/dist;
+    index index.html;
+
+    # Cấu hình cho frontend (SPA) VÀ bảo vệ bằng mật khẩu
+    location / {
+        # --- THÊM CÁC DÒNG BẢO MẬT SAU ---
+        auth_basic "Restricted Content";
+        auth_basic_user_file /etc/nginx/.htpasswd-ditavn.tababyco.com;
+        # ------------------------------------
+
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cấu hình cho backend API VÀ bảo vệ bằng mật khẩu
+    location /api {
+        # --- THÊM CÁC DÒNG BẢO MẬT SAU ---
+        auth_basic "Restricted Content";
+        auth_basic_user_file /etc/nginx/.htpasswd-ditavn.tababyco.com;
+        # ------------------------------------
+        
+        proxy_pass http://localhost:4003;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+
+# Khối server cho HTTP (cổng 80) do Certbot tạo để tự động chuyển hướng
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ditavn.tababyco.com;
+
+    # Certbot tự động thêm lệnh này để chuyển hướng tất cả traffic HTTP sang HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}

@@ -108,6 +108,6 @@ UNIQUE (report_date, campaign_id, ad_group_id, keyword_id, customer_search_term,
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sponsored_products_search_term_report TO yourdbuser;
-GRANT USAGE, SELECT ON SEQUENCE sponsored_products_search_term_report_id_seq TO yourdbuser;
+-- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sponsored_products_search_term_report TO ditavn;
+GRANT USAGE, SELECT ON SEQUENCE sponsored_products_search_term_report_id_seq TO ditavn;
