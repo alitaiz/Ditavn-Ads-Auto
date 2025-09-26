@@ -8,7 +8,6 @@ interface SuggestedRule {
     rule_type: string;
     ad_type?: string;
     config: any;
-    reasoning?: string;
 }
 
 interface Playbook {
@@ -69,7 +68,13 @@ export function AIRuleSuggester() {
         end: today.toISOString().split('T')[0] 
     });
 
-    const [result, setResult] = useState<{ type: 'rule' | 'playbook', data: any, dataSummary?: any, reasoning?: string } | null>(null);
+    // States for streaming results
+    const [dataSummary, setDataSummary] = useState<any | null>(null);
+    const [analysis, setAnalysis] = useState<string | null>(null);
+    const [strategy, setStrategy] = useState<string | null>(null);
+    const [finalRule, setFinalRule] = useState<any | null>(null);
+    const [playbook, setPlaybook] = useState<Playbook | null>(null);
+
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -80,10 +85,18 @@ export function AIRuleSuggester() {
         setNewProductInputs(prev => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
+    const resetResultStates = () => {
+        setDataSummary(null);
+        setAnalysis(null);
+        setStrategy(null);
+        setFinalRule(null);
+        setPlaybook(null);
+        setError(null);
+    };
+
     const handleSubmit = useCallback(async () => {
         setLoading(true);
-        setError(null);
-        setResult(null);
+        resetResultStates();
 
         const body = {
             isNewProduct,
@@ -99,20 +112,51 @@ export function AIRuleSuggester() {
         };
 
         try {
-            const res = await fetch('/api/ai/suggest-rule', {
+            const response = await fetch('/api/ai/suggest-rule', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'An unknown error occurred.');
-            
-            setResult({
-                type: data.type,
-                data: data.rule || data.playbook,
-                dataSummary: data.dataSummary,
-                reasoning: data.reasoning
-            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || `Request failed with status ${response.status}`);
+            }
+            if (!response.body) {
+                throw new Error("Response body is missing.");
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                
+                for (let i = 0; i < parts.length - 1; i++) {
+                    const part = parts[i];
+                    if (part.startsWith('data: ')) {
+                        try {
+                            const jsonData = JSON.parse(part.substring(6));
+                            switch(jsonData.type) {
+                                case 'dataSummary': setDataSummary(jsonData.content); break;
+                                case 'analysis': setAnalysis(prev => (prev || '') + jsonData.content); break;
+                                case 'strategy': setStrategy(prev => (prev || '') + jsonData.content); break;
+                                case 'rule': setFinalRule(jsonData.content); break;
+                                case 'playbook': setPlaybook(jsonData.content); break;
+                                case 'error': throw new Error(jsonData.content);
+                            }
+                        } catch(e) {
+                             console.error("Failed to parse stream chunk:", part, e);
+                        }
+                    }
+                }
+                buffer = parts[parts.length - 1];
+            }
 
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to get suggestion.');
@@ -167,38 +211,8 @@ export function AIRuleSuggester() {
     );
     
     const renderResult = () => {
-        if (!result) return null;
-    
-        if (!result.data) {
-            return (
-                <div style={styles.resultCard}>
-                    <p>{result.reasoning || "Không có dữ liệu để tạo đề xuất. Vui lòng thử lại với một khoảng thời gian khác hoặc kiểm tra lại ASIN."}</p>
-                </div>
-            );
-        }
-    
-        if (result.type === 'rule') {
-            const rule = result.data as SuggestedRule;
-            return (
-                <>
-                    {result.dataSummary && <DataSummary summary={result.dataSummary} />}
-                    <div style={styles.resultCard}>
-                        <h2 style={styles.resultTitle}>Lý do Đề xuất</h2>
-                        <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.reasoning || "AI không cung cấp lý do."}</p>
-                    </div>
-                    <div style={styles.resultCard}>
-                        <h2 style={styles.resultTitle}>Rule Được Đề xuất: {rule.name}</h2>
-                        <p style={{fontFamily: 'monospace', whiteSpace: 'pre-wrap', backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '4px', border: '1px solid #eee', lineHeight: 1.7}}>
-                           Tối ưu hóa Bid dựa trên ACoS (Mục tiêu {result.dataSummary?.financial.targetAcos?.toFixed(2)}%)
-                        </p>
-                    </div>
-                </>
-            );
-        }
-    
-        if (result.type === 'playbook') {
-            const playbook = result.data as Playbook;
-            return (
+        if (playbook) {
+             return (
                 <>
                      <div style={styles.resultCard}>
                         <h2 style={styles.resultTitle}>Chiến lược của AI</h2>
@@ -226,8 +240,15 @@ export function AIRuleSuggester() {
                 </>
             );
         }
-    
-        return null;
+
+        return (
+            <>
+                {dataSummary && <DataSummary summary={dataSummary} />}
+                {analysis && <div style={styles.resultCard}><h2 style={styles.resultTitle}>Phân tích của AI</h2><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{analysis}</p></div>}
+                {strategy && <div style={styles.resultCard}><h2 style={styles.resultTitle}>Chiến lược Đề xuất</h2><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{strategy}</p></div>}
+                {finalRule && <div style={styles.resultCard}><h2 style={styles.resultTitle}>Rule Được Đề xuất: {finalRule.name}</h2><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{finalRule.reasoning}</p></div>}
+            </>
+        )
     };
     
     return (
@@ -252,12 +273,12 @@ export function AIRuleSuggester() {
                 <div style={styles.resultsContainer}>
                     {loading && <div style={styles.loaderContainer}><div style={styles.loader}></div></div>}
                     {error && <div style={styles.error}>{error}</div>}
-                    {!loading && !error && !result && (
+                    {!loading && !error && !dataSummary && !playbook && (
                         <div style={styles.placeholder}>
                            <p>Đề xuất của AI sẽ được hiển thị ở đây.</p>
                         </div>
                     )}
-                    {result && renderResult()}
+                    {renderResult()}
                 </div>
             </div>
         </div>

@@ -14,17 +14,26 @@ router.post('/ai/suggest-rule', async (req, res) => {
 
     try {
         if (isNewProduct) {
-            // --- Logic for New Product (uses direct Gemini call) ---
+            // Logic for New Product (uses direct Gemini call, sends single JSON response)
             const result = await getNewProductLaunchPlan(productData);
             res.json(result);
         } else {
-            // --- Logic for Existing Product (uses new LangGraph Agent) ---
-            const result = await getExistingProductRule(productData, ruleType, dateRange);
-            res.json(result);
+            // Logic for Existing Product (uses LangGraph Agent with streaming)
+            res.setHeader('Content-Type', 'text/event-stream');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Connection', 'keep-alive');
+            
+            await streamExistingProductRule(res, productData, ruleType, dateRange);
         }
     } catch (error) {
         console.error('[AI Suggester] Error:', error);
-        res.status(500).json({ error: error.message || 'An internal server error occurred.' });
+        // If headers are not sent, send an error response. Otherwise, just end.
+        if (!res.headersSent) {
+            res.status(500).json({ error: error.message || 'An internal server error occurred.' });
+        } else {
+            res.write(`data: ${JSON.stringify({ type: 'error', content: error.message })}\n\n`);
+            res.end();
+        }
     }
 });
 
@@ -64,17 +73,17 @@ const getNewProductLaunchPlan = async (productData) => {
                 type: Type.ARRAY,
                 items: {
                     type: Type.OBJECT,
-                    properties: { name: { type: Type.STRING }, type: { type: Type.STRING }, purpose: { type: Type.STRING } }
+                    properties: { name: { type: 'STRING' }, type: { type: 'STRING' }, purpose: { type: 'STRING' } }
                 }
             },
             suggestedRules: {
                 type: Type.ARRAY,
                 items: {
                     type: Type.OBJECT,
-                    properties: { name: { type: Type.STRING }, logic: { type: Type.STRING }, reasoning: { type: Type.STRING } }
+                    properties: { name: { type: 'STRING' }, logic: { type: 'STRING' }, reasoning: { type: 'STRING' } }
                 }
             },
-            reasoning: { type: Type.STRING }
+            reasoning: { type: 'STRING' }
         },
         required: ["suggestedKeywords", "suggestedCampaigns", "suggestedRules", "reasoning"]
     };
@@ -89,62 +98,57 @@ const getNewProductLaunchPlan = async (productData) => {
     return { type: 'playbook', playbook: result };
 };
 
-// --- Function for EXISTING PRODUCT Rule Suggestion (Upgraded to use LangGraph Agent) ---
-const getExistingProductRule = async (productData, ruleType, dateRange) => {
-    // 1. Prepare the initial input for the agent.
+// --- Function for EXISTING PRODUCT Rule Suggestion (Streaming Version) ---
+const streamExistingProductRule = async (res, productData, ruleType, dateRange) => {
     const agentInput = {
-        userInput: {
-            productData,
-            ruleType,
-            dateRange
-        }
+        userInput: { productData, ruleType, dateRange }
     };
 
-    // 2. Invoke the agent to get the final state directly. This is more robust
-    //    than streaming when we only need the final result.
-    const finalState = await agentApp.invoke(agentInput);
+    const stream = await agentApp.stream(agentInput);
 
-    // 3. Handle potential errors from the agent.
-    if (finalState.error) {
-        return {
-            type: 'rule',
-            rule: null,
-            reasoning: finalState.error, // Pass the agent's error message to the frontend.
-            dataSummary: null
-        };
-    }
-
-    // 4. Construct the response for the frontend from the agent's final state.
-    const { financialMetrics, performanceData, finalResult } = finalState;
-
-    if (!finalResult) {
-        return {
-            type: 'rule',
-            rule: null,
-            reasoning: 'AI agent finished without producing a final result. This may be due to a logic error in the agent graph.',
-            dataSummary: null,
-        };
-    }
-
-    const { profitPerUnit, breakEvenAcos } = financialMetrics;
-    const { total_spend, total_sales } = performanceData;
-
-    const dataSummary = {
-        financial: {
-            profitPerUnit,
-            breakEvenAcos,
-            targetAcos: breakEvenAcos * 0.8
-        },
-        performance: {
-            totalSpend: parseFloat(total_spend),
-            totalSales: parseFloat(total_sales),
-            overallAcos: total_sales > 0 ? (total_spend / total_sales) * 100 : 0,
+    for await (const chunk of stream) {
+        if (chunk.gatherData) {
+            const { financialMetrics, performanceData, error } = chunk.gatherData;
+            if (error) {
+                res.write(`data: ${JSON.stringify({ type: 'error', content: error })}\n\n`);
+                return;
+            }
+            const dataSummary = {
+                financial: financialMetrics,
+                performance: {
+                    totalSpend: parseFloat(performanceData.total_spend),
+                    totalSales: parseFloat(performanceData.total_sales),
+                    overallAcos: parseFloat(performanceData.total_sales) > 0 ? (parseFloat(performanceData.total_spend) / parseFloat(performanceData.total_sales)) * 100 : 0,
+                }
+            };
+            res.write(`data: ${JSON.stringify({ type: 'dataSummary', content: dataSummary })}\n\n`);
         }
-    };
-    
-    const { rule, reasoning } = finalResult;
-
-    return { type: 'rule', rule, reasoning, dataSummary };
+        if (chunk.analyzePerformance) {
+            const { analysis, error } = chunk.analyzePerformance;
+            if (error) {
+                res.write(`data: ${JSON.stringify({ type: 'error', content: error })}\n\n`);
+                return;
+            }
+            res.write(`data: ${JSON.stringify({ type: 'analysis', content: analysis })}\n\n`);
+        }
+        if (chunk.strategize) {
+            const { strategy, error } = chunk.strategize;
+             if (error) {
+                res.write(`data: ${JSON.stringify({ type: 'error', content: error })}\n\n`);
+                return;
+            }
+            res.write(`data: ${JSON.stringify({ type: 'strategy', content: strategy })}\n\n`);
+        }
+        if (chunk.constructRule) {
+            const { finalResult, error } = chunk.constructRule;
+            if (error) {
+                res.write(`data: ${JSON.stringify({ type: 'error', content: error })}\n\n`);
+                return;
+            }
+            res.write(`data: ${JSON.stringify({ type: 'rule', content: finalResult })}\n\n`);
+        }
+    }
+    res.end();
 };
 
 

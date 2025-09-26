@@ -9,6 +9,8 @@ const agentState = {
     userInput: { value: null },
     financialMetrics: { value: null },
     performanceData: { value: null },
+    analysis: { value: null }, // NEW: To store intermediate analysis
+    strategy: { value: null }, // NEW: To store intermediate strategy
     finalResult: { value: null },
     error: { value: null },
 };
@@ -29,32 +31,23 @@ const gatherDataNode = async (state) => {
     const { productData, dateRange } = state.userInput;
 
     try {
-        // Use tools to get financial and performance data.
-        // The tools expect a single JSON string as input.
-        const financialInput = {
-            salePrice: productData.salePrice,
-            productCost: productData.productCost,
-            fbaFee: productData.fbaFee,
-            referralFeePercent: productData.referralFeePercent,
-        };
-        const financialResultStr = await financialsTool.invoke(JSON.stringify(financialInput));
+        const financialInput = JSON.stringify({
+            salePrice: productData.salePrice, productCost: productData.productCost,
+            fbaFee: productData.fbaFee, referralFeePercent: productData.referralFeePercent,
+        });
+        const financialResultStr = await financialsTool.invoke(financialInput);
         const financialMetrics = JSON.parse(financialResultStr);
+        financialMetrics.targetAcos = financialMetrics.breakEvenAcos * 0.8;
 
-        const performanceInput = {
-            asin: productData.asin,
-            startDate: dateRange.start,
-            endDate: dateRange.end,
-        };
-        const performanceResultStr = await performanceSummaryTool.invoke(JSON.stringify(performanceInput));
-
-        // Check if performance data was found.
-        const performanceData = performanceResultStr.startsWith("No performance data") 
-            ? null 
-            : JSON.parse(performanceResultStr);
-
-        if (!performanceData) {
-             return { error: "No performance data found for the given ASIN and date range." };
+        const performanceInput = JSON.stringify({
+            asin: productData.asin, startDate: dateRange.start, endDate: dateRange.end,
+        });
+        const performanceResultStr = await performanceSummaryTool.invoke(performanceInput);
+        
+        if (performanceResultStr.startsWith("No performance data")) {
+             return { error: performanceResultStr };
         }
+        const performanceData = JSON.parse(performanceResultStr);
         
         return { financialMetrics, performanceData };
     } catch (e) {
@@ -63,59 +56,77 @@ const gatherDataNode = async (state) => {
 };
 
 /**
- * Node 2: Analyzes the gathered data and generates the final JSON output.
+ * Node 2: Analyzes performance against goals.
  */
-const analystAndFormatNode = async (state) => {
-    console.log("[Agent] ==> analystAndFormatNode");
-    const { financialMetrics, performanceData, userInput } = state;
+const analyzePerformanceNode = async (state) => {
+    console.log("[Agent] ==> analyzePerformanceNode");
+    const { financialMetrics, performanceData } = state;
+
+    const overallAcos = parseFloat(performanceData.total_sales) > 0 
+        ? (parseFloat(performanceData.total_spend) / parseFloat(performanceData.total_sales)) * 100 
+        : (parseFloat(performanceData.total_spend) > 0 ? Infinity : 0);
+
+    const prompt = `
+        Analyze the following PPC data. Compare the overall ACoS to the target and break-even ACoS.
+        Concisely state the core problem or opportunity in one or two sentences in Vietnamese.
+
+        - Break-Even ACoS: ${financialMetrics.breakEvenAcos.toFixed(2)}%
+        - Target ACoS: ${financialMetrics.targetAcos.toFixed(2)}%
+        - Overall ACoS: ${overallAcos.toFixed(2)}%
+    `;
+    const response = await model.invoke(prompt);
+    return { analysis: response.content };
+};
+
+/**
+ * Node 3: Formulates a high-level strategy.
+ */
+const strategizeNode = async (state) => {
+    console.log("[Agent] ==> strategizeNode");
+    const { analysis, userInput } = state;
     const { ruleType } = userInput;
 
-    // Calculate derived metrics.
-    const { profitPerUnit, breakEvenAcos } = financialMetrics;
-    const { total_spend, total_sales } = performanceData;
-    const targetAcos = breakEvenAcos * 0.8;
-    const overallAcos = total_sales > 0 ? (parseFloat(total_spend) / parseFloat(total_sales)) * 100 : 0;
-
-    // Build a detailed prompt for the Gemini model.
     const prompt = `
-        BẠN LÀ MỘT TRỢ LÝ AI CHUYÊN GIA VỀ TỐI ƯU HÓA AMAZON PPC VỚI NHIỀU NĂM KINH NGHIỆM.
-        Nhiệm vụ của bạn là thực hiện một phân tích chi tiết theo từng bước và đề xuất một luật tự động hóa PPC thông minh.
+        Based on this analysis: "${analysis}".
+        What is the high-level strategy to create a "${ruleType}" rule to address this?
+        Respond in one or two sentences in Vietnamese.
+    `;
+    const response = await model.invoke(prompt);
+    return { strategy: response.content };
+};
 
+/**
+ * Node 4: Constructs the final rule and detailed reasoning.
+ */
+const constructRuleNode = async (state) => {
+    console.log("[Agent] ==> constructRuleNode");
+    const { financialMetrics, performanceData, analysis, strategy, userInput } = state;
+    const { ruleType } = userInput;
+
+    const prompt = `
+        BẠN LÀ MỘT TRỢ LÝ AI CHUYÊN GIA VỀ TỐI ƯU HÓA AMAZON PPC.
+        
         **Bối cảnh:**
-        - Sản phẩm có các chỉ số tài chính sau:
-            - Lợi nhuận mỗi đơn vị: $${profitPerUnit.toFixed(2)}
-            - ACoS Hòa vốn: ${breakEvenAcos.toFixed(2)}% (Đây là mức ACoS tối đa để không bị lỗ)
-            - ACoS Mục tiêu: ${targetAcos.toFixed(2)}% (Mức ACoS lý tưởng để có lợi nhuận)
-        - Hiệu suất tổng thể trong khoảng thời gian đã chọn:
-            - Tổng chi tiêu quảng cáo: $${parseFloat(total_spend).toFixed(2)}
-            - Tổng doanh số từ quảng cáo: $${parseFloat(total_sales).toFixed(2)}
-            - ACoS Tổng thể: ${overallAcos.toFixed(2)}%
+        - **Phân tích ban đầu:** ${analysis}
+        - **Chiến lược đã xác định:** ${strategy}
+        - **Dữ liệu tài chính:** ${JSON.stringify(financialMetrics)}
+        - **Dữ liệu hiệu suất:** ${JSON.stringify(performanceData)}
 
-        **Quy trình Phân tích (Hãy suy nghĩ theo các bước sau):**
-        1.  **So sánh Hiệu suất:** So sánh ACoS Tổng thể (${overallAcos.toFixed(2)}%) với ACoS Mục tiêu (${targetAcos.toFixed(2)}%) và ACoS Hòa vốn (${breakEvenAcos.toFixed(2)}%). Hiệu suất hiện tại đang tốt, xấu, hay rất xấu?
-        2.  **Xác định Vấn đề Cốt lõi:** Dựa trên so sánh ở bước 1, vấn đề chính là gì? (Ví dụ: "ACoS hiện tại cao hơn nhiều so với mục tiêu, cho thấy chi tiêu quảng cáo chưa hiệu quả", hoặc "ACoS thấp hơn mục tiêu, có cơ hội để tăng bid và mở rộng quy mô").
-        3.  **Đề xuất Giải pháp:** Dựa trên vấn đề, đề xuất một chiến lược chung. (Ví dụ: "Cần một luật để cắt giảm chi tiêu lãng phí cho các từ khóa không hiệu quả", hoặc "Cần một luật để tăng bid cho các từ khóa đang hoạt động tốt").
-        4.  **Xây dựng Rule Chi tiết:** Dựa trên chiến lược, tạo ra một rule cụ thể. Hãy giải thích tại sao bạn chọn các chỉ số, khoảng thời gian và giá trị cụ thể trong rule. Sử dụng nguyên tắc "First Match Wins" bằng cách đặt các điều kiện nghiêm ngặt nhất (ví dụ: cắt lỗ) lên trên.
-        5.  **Tạo JSON Output:** Dựa trên các bước trên, tạo ra đối tượng JSON cuối cùng.
-
-        **Yêu cầu:** Hãy tạo một luật loại "${ruleType}".
+        **Yêu cầu:**
+        Dựa trên tất cả thông tin trên, hãy xây dựng một rule tự động hóa loại "${ruleType}" cụ thể và chi tiết.
         
         **Output:** Phản hồi của bạn PHẢI là một đối tượng JSON hợp lệ duy nhất, chứa hai khóa:
-        1.  **"rule"**: Một đối tượng JSON chứa cấu hình rule tự động hóa.
-        2.  **"reasoning"**: Một chuỗi (string) giải thích chi tiết quy trình suy nghĩ của bạn (bao gồm các bước 1-4 ở trên) bằng tiếng Việt.
+        1.  **"rule"**: Một đối tượng JSON chứa cấu hình rule tự động hóa (chỉ có name, rule_type, và config).
+        2.  **"reasoning"**: Một chuỗi (string) giải thích chi tiết logic đằng sau rule bạn vừa tạo, tại sao bạn chọn các chỉ số và giá trị đó. Viết bằng tiếng Việt.
     `;
     
-    // Call the model and parse the output.
     const response = await model.invoke(prompt);
     try {
-        // Use a JSON parser to ensure the output is valid.
         const parser = new JsonOutputParser();
         const result = await parser.parse(response.content);
         return { finalResult: result };
     } catch(e) {
-        console.error("[Agent] LLM output parsing failed:", e.message);
-        console.error("[Agent] Raw LLM output:", response.content);
-        return { error: `Failed to parse final result from LLM. Raw output: ${response.content}` }
+        return { error: `Failed to parse final rule from LLM. Raw output: ${response.content}` };
     }
 };
 
@@ -137,15 +148,19 @@ const workflow = new StateGraph({ channels: agentState });
 
 // Add nodes to the graph
 workflow.addNode("gatherData", gatherDataNode);
-workflow.addNode("analyst", analystAndFormatNode);
+workflow.addNode("analyzePerformance", analyzePerformanceNode);
+workflow.addNode("strategize", strategizeNode);
+workflow.addNode("constructRule", constructRuleNode);
 
 // Define the workflow connections
 workflow.setEntryPoint("gatherData");
 workflow.addConditionalEdges("gatherData", dataCheckEdge, {
-    analyze: "analyst",
+    analyze: "analyzePerformance",
     end: END,
 });
-workflow.addEdge("analyst", END);
+workflow.addEdge("analyzePerformance", "strategize");
+workflow.addEdge("strategize", "constructRule");
+workflow.addEdge("constructRule", END);
 
 // Compile the graph into a runnable application.
 export const agentApp = workflow.compile();
