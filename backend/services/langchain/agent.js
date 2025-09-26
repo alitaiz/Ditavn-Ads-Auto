@@ -1,5 +1,5 @@
 // backend/services/langchain/agent.js
-import { StateGraph, END } from "langgraph";
+import { StateGraph, END } from "@langchain/langgraph";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { JsonOutputParser } from "@langchain/core/output_parsers";
 import { financialsTool, performanceSummaryTool } from "./tools.js";
