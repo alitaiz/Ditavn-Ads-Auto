@@ -81,23 +81,43 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                 
                 // --- EMIT THOUGHT & ACTION ---
                 if (msg.tool_calls?.length) {
-                    // Emit a general thought process if available as text content
                     if (typeof msg.content === 'string' && msg.content.trim()) {
                          res.write(`data: ${JSON.stringify({ type: 'thought', content: msg.content.trim() })}\n\n`);
                     }
 
-                    // Emit each specific tool call as an action
                     msg.tool_calls.forEach(toolCall => {
-                        // Pretty-print the JSON arguments for better readability in the UI.
-                        const argsString = JSON.stringify(toolCall.args, null, 2);
+                        let argsString;
+                        try {
+                            // Attempt to parse nested JSON for better formatting if the model stringifies its args.
+                            let parsedArgs = {};
+                            let isFullyParsed = true;
+                            for (const key in toolCall.args) {
+                                try {
+                                    parsedArgs[key] = JSON.parse(toolCall.args[key]);
+                                } catch (e) {
+                                    isFullyParsed = false;
+                                    break; 
+                                }
+                            }
+                            argsString = isFullyParsed ? JSON.stringify(parsedArgs, null, 2) : JSON.stringify(toolCall.args, null, 2);
+                        } catch (e) {
+                            argsString = JSON.stringify(toolCall.args, null, 2);
+                        }
                         const action = `${toolCall.name}[${argsString}]`;
                         res.write(`data: ${JSON.stringify({ type: 'action', content: action })}\n\n`);
                     });
 
                 } else if (msg.content && typeof msg.content === 'string') {
                      try {
-                        const finalJson = JSON.parse(msg.content);
-                        // This is the final answer
+                        // FIX: Robustly strip markdown wrappers from the JSON response
+                        let contentStr = msg.content.trim();
+                        if (contentStr.startsWith("```json")) {
+                            contentStr = contentStr.substring(7, contentStr.length - 3).trim();
+                        } else if (contentStr.startsWith("```")) {
+                            contentStr = contentStr.substring(3, contentStr.length - 3).trim();
+                        }
+                        
+                        const finalJson = JSON.parse(contentStr);
                         res.write(`data: ${JSON.stringify({ type: 'result', content: finalJson })}\n\n`);
                     } catch (e) {
                          // This is likely a text response to a follow-up question
@@ -112,13 +132,11 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
             messagesArray.forEach(msg => {
                 finalMessages.push(msg);
-                // --- EMIT OBSERVATION ---
                 res.write(`data: ${JSON.stringify({ type: 'observation', content: msg.content })}\n\n`);
             });
         }
     }
     
-    // Save the complete message history for the next turn
     conversations.set(conversationId, finalMessages);
     res.end();
 };
