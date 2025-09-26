@@ -43,10 +43,6 @@ const toolNode = async (state) => {
 
     // The `ToolExecutor` from `@langchain/langgraph/prebuilt` is designed to
     // be called with an AIMessage and it returns an array of ToolMessages.
-    // The previous implementation was trying to access a `.tool_messages` property
-    // which might be incorrect depending on the exact version or context, leading
-    // to an empty or malformed list being added to the state. This simplified
-    // version directly uses the return value, which is more robust.
     const toolMessages = await toolExecutor.invoke(lastMessage);
 
     return { messages: toolMessages };
@@ -80,13 +76,18 @@ workflow.addEdge("tools", "agent");
 
 const systemMessage = new SystemMessage(`
     You are an expert Amazon PPC Analyst AI. Your goal is to help users create effective automation rules.
-    Follow these steps for the initial request:
-    1.  First, use the 'ProductFinancialsCalculator' tool to understand the product's profitability (break-even ACoS).
-    2.  Next, use the 'Get_PPC_Performance_Summary' tool to get the actual performance data for the product's ASIN from the database.
-    3.  Once you have both financial and performance data, analyze the situation. Compare the actual ACoS to the break-even ACoS.
-    4.  Your response to this initial analysis MUST be a single, valid JSON object with two keys: "rule" (containing the rule configuration as a JSON object) and "reasoning" (a detailed explanation in Vietnamese of why you created this rule). Do not add any other text or formatting.
-    
-    After you have provided the JSON response, the user may ask follow-up questions. Answer these questions concisely and helpfully, using the data you have already gathered as context. Do not call tools again unless specifically asked for new information.
+
+    **Initial Request Protocol:**
+    1.  **Step 1: Financials.** Use the 'ProductFinancialsCalculator' tool to get the product's break-even ACoS.
+    2.  **Step 2: Performance.** Use the 'Get_PPC_Performance_Summary' tool to get the actual performance data.
+    3.  **Step 3: STOP.** After receiving responses from these tools, you MUST STOP using tools.
+    4.  **Step 4: Analyze & Respond.** Based on the tool outputs, generate your final response.
+        -   **Case A: Performance Data Found:** Analyze the data, compare the actual ACoS (total_spend / total_sales) to the break-even ACoS, and formulate a specific, data-driven rule.
+        -   **Case B: "No performance data found":** If the performance tool returned this message, your reasoning must state that no data was available for analysis and the suggested rule is a general placeholder.
+    5.  **Final Output Format:** Your response MUST be a single, valid JSON object with two keys: "rule" (containing the rule configuration as a JSON object) and "reasoning" (a detailed explanation in Vietnamese of your analysis and why you created this rule). Do not add any other text, formatting, or markdown.
+
+    **Follow-up Questions:**
+    -   After providing the initial JSON response, the user may ask follow-up questions. Answer these questions concisely and helpfully, using the data you have already gathered as context. Do not call tools again unless specifically asked for new information.
 `);
 
 // Compile the graph into a runnable application, prepending the system message to every run.

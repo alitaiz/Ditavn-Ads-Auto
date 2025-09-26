@@ -2,9 +2,14 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 
 // --- Type Definitions ---
+type TraceStepType = 'thought' | 'action' | 'observation';
+interface TraceStep {
+    type: TraceStepType;
+    content: string;
+}
 interface ChatMessage {
-    type: 'user' | 'agent' | 'thought' | 'rule' | 'error';
-    content: any;
+    type: 'user' | 'agent' | 'agent_trace' | 'rule' | 'error';
+    content: any; // string for user/agent, TraceStep[] for agent_trace, etc.
     id: number;
 }
 interface SuggestedRule {
@@ -12,12 +17,6 @@ interface SuggestedRule {
     rule_type: string;
     ad_type?: string;
     config: any;
-}
-interface Playbook {
-    suggestedKeywords: { core: string[], long_tail: string[] };
-    suggestedCampaigns: { name: string, type: string, purpose: string }[];
-    suggestedRules: { name: string, logic: string, reasoning: string }[];
-    reasoning: string;
 }
 
 // --- Styles ---
@@ -50,11 +49,21 @@ const styles: { [key: string]: React.CSSProperties } = {
     placeholder: { textAlign: 'center', color: '#666', padding: '50px', backgroundColor: '#f8f9fa', borderRadius: 'var(--border-radius)', border: '2px dashed var(--border-color)' },
     radioGroup: { display: 'flex', gap: '15px', flexWrap: 'wrap' },
     infoBox: { backgroundColor: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 'var(--border-radius)', padding: '15px', fontSize: '0.9rem', color: '#0050b3', marginBottom: '20px' },
-    thoughtLog: { backgroundColor: '#f0f2f2', color: '#444', borderRadius: '8px', padding: '15px', fontFamily: 'monospace', fontSize: '0.85rem', whiteSpace: 'pre-wrap', lineHeight: '1.5', maxHeight: '400px', overflowY: 'auto', border: '1px solid #ddd' },
     messageBubble: { maxWidth: '85%', padding: '10px 15px', borderRadius: '18px', wordWrap: 'break-word' },
     agentBubble: { backgroundColor: 'white', border: '1px solid #ddd', alignSelf: 'flex-start' },
     userBubble: { backgroundColor: '#007185', color: 'white', alignSelf: 'flex-end' },
+    agentTrace: { backgroundColor: '#f0f2f2', color: '#444', borderRadius: '8px', padding: '15px', fontFamily: 'monospace', fontSize: '0.85rem', whiteSpace: 'pre-wrap', lineHeight: '1.6' },
 };
+
+// --- Child Component for Agent Trace ---
+const AgentTrace: React.FC<{ steps: TraceStep[] }> = ({ steps }) => (
+    <div style={styles.agentTrace}>
+        {steps.map((step, index) => {
+            const label = step.type.charAt(0).toUpperCase() + step.type.slice(1);
+            return <div key={index}><strong>{label}:</strong> {step.content}</div>;
+        })}
+    </div>
+);
 
 export function AIRuleSuggester() {
     const [isNewProduct, setIsNewProduct] = useState(false);
@@ -82,6 +91,18 @@ export function AIRuleSuggester() {
     const appendToHistory = (type: ChatMessage['type'], content: any) => {
         setChatHistory(prev => [...prev, { type, content, id: Date.now() + Math.random() }]);
     };
+    
+    const appendToTrace = (type: TraceStepType, content: string) => {
+        setChatHistory(prev => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.type === 'agent_trace') {
+                const updatedTrace = [...lastMessage.content, { type, content }];
+                return [...prev.slice(0, -1), { ...lastMessage, content: updatedTrace }];
+            } else {
+                return [...prev, { type: 'agent_trace', content: [{ type, content }], id: Date.now() }];
+            }
+        });
+    };
 
     const handleInitialSubmit = useCallback(async () => {
         setLoading(true);
@@ -102,7 +123,6 @@ export function AIRuleSuggester() {
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-            let currentThoughts: string[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -117,15 +137,9 @@ export function AIRuleSuggester() {
                             const jsonData = JSON.parse(part.substring(6));
                             if (jsonData.type === 'conversationStart') {
                                 setConversationId(jsonData.content.conversationId);
-                            } else if (jsonData.type === 'playbook') {
-                                appendToHistory('agent', jsonData.content.reasoning);
-                            } else if (jsonData.type === 'thought') {
-                                currentThoughts.push(jsonData.content);
+                            } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
+                                appendToTrace(jsonData.type, jsonData.content);
                             } else if (jsonData.type === 'result') {
-                                if (currentThoughts.length > 0) {
-                                    appendToHistory('thought', currentThoughts.join('\n'));
-                                    currentThoughts = [];
-                                }
                                 appendToHistory('rule', jsonData.content);
                             } else if (jsonData.type === 'error') {
                                 throw new Error(jsonData.content);
@@ -186,16 +200,11 @@ export function AIRuleSuggester() {
             case 'user': return <div style={{ ...styles.messageBubble, ...styles.userBubble }}><p style={{margin:0}}>{message.content}</p></div>;
             case 'agent': return <div style={{ ...styles.messageBubble, ...styles.agentBubble }}><p style={{margin:0, whiteSpace: 'pre-wrap'}}>{message.content}</p></div>;
             case 'error': return <div style={styles.error}>{message.content}</div>;
-            case 'thought': return (
-                <div style={styles.resultCard}>
-                    <h3 style={styles.resultTitle}>Agent's Thought Process</h3>
-                    <div style={styles.thoughtLog}>{message.content}</div>
-                </div>
-            );
+            case 'agent_trace': return <AgentTrace steps={message.content} />;
             case 'rule': return (
-                <div style={styles.resultCard}>
-                    <h3 style={styles.resultTitle}>Suggested Rule: {message.content.rule.name}</h3>
-                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{message.content.reasoning}</p>
+                <div style={{ ...styles.messageBubble, ...styles.agentBubble }}>
+                    <h3 style={styles.resultTitle}>Final Answer: Suggested Rule "{message.content.rule.name}"</h3>
+                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: 0 }}>{message.content.reasoning}</p>
                 </div>
             );
             default: return null;
@@ -205,11 +214,12 @@ export function AIRuleSuggester() {
     return (
         <div style={styles.container}>
             <style>{spinnerKeyframes}</style>
-            <div style={styles.toggleContainer}><span style={styles.toggleLabel}>Sản phẩm có sẵn dữ liệu</span><label style={styles.toggleSwitch}><input type="checkbox" style={styles.toggleInput} checked={isNewProduct} onChange={() => setIsNewProduct(!isNewProduct)} /><span style={{...styles.toggleSlider, backgroundColor: isNewProduct ? 'var(--primary-color)' : '#ccc'}}><span style={{...styles.toggleSliderBefore, transform: isNewProduct ? 'translateX(26px)' : 'translateX(0)'}} /></span></label><span style={styles.toggleLabel}>Sản phẩm mới (không có dữ liệu)</span></div>
+            <div style={styles.toggleContainer}><span style={styles.toggleLabel}>Sản phẩm có sẵn dữ liệu</span><label style={styles.toggleSwitch}><input type="checkbox" style={styles.toggleInput} checked={!isNewProduct} onChange={() => setIsNewProduct(false)} /><span style={{...styles.toggleSlider, backgroundColor: !isNewProduct ? 'var(--primary-color)' : '#ccc'}}><span style={{...styles.toggleSliderBefore, transform: !isNewProduct ? 'translateX(26px)' : 'translateX(0)'}} /></span></label><span style={styles.toggleLabel}>Sản phẩm mới (không có dữ liệu)</span></div>
             <div style={styles.contentGrid}>
                 <div style={styles.formCard}>
                     {isNewProduct ? (
                         <>
+                           <div style={styles.infoBox}><strong>Đề xuất Kế hoạch Khởi chạy:</strong> Agent AI sẽ phân tích thông tin sản phẩm của bạn để xây dựng một chiến lược khởi chạy PPC toàn diện, bao gồm cấu trúc chiến dịch, từ khóa và các quy tắc tự động hóa ban đầu.</div>
                             <div style={styles.formGroup}><label style={styles.label}>Mô tả sản phẩm</label><textarea style={styles.textarea} name="description" value={newProductInputs.description} onChange={handleNewInputChange} placeholder="Ví dụ: ghế tắm bằng gỗ tre, chống trượt..." required /></div>
                             <div style={styles.formGroup}><label style={styles.label}>Đối thủ cạnh tranh (ASIN)</label><input style={styles.input} name="competitors" value={newProductInputs.competitors} onChange={handleNewInputChange} placeholder="Ví dụ: B0..., B0..." /></div>
                             <div style={styles.formGroup}><label style={styles.label}>Điểm bán hàng độc nhất (USP)</label><textarea style={styles.textarea} name="usp" value={newProductInputs.usp} onChange={handleNewInputChange} placeholder="Ví dụ: làm từ 100% tre tự nhiên, chịu tải trọng cao..." required /></div>
@@ -219,7 +229,7 @@ export function AIRuleSuggester() {
                     ) : (
                         <>
                             <div style={styles.infoBox}><strong>Đề xuất Dựa trên Dữ liệu:</strong> Agent AI sẽ sử dụng các công cụ để tự động truy vấn và phân tích dữ liệu hiệu suất sản phẩm của bạn. Dựa trên phân tích đó, nó sẽ xây dựng một quy tắc tự động hóa phù hợp nhất.</div>
-                            <div style={styles.formGroup}><label style={styles.label}>ASIN</label><input style={styles.input} name="asin" value={existingProductInputs.asin} onChange={handleExistingInputChange} placeholder="B0..." required /></div>
+                            <div style={styles.formGroup}><label style={styles.label}>ASIN</label><input style={styles.input} name="asin" value={existingProductInputs.asin} onChange={handleExistingInputChange} placeholder="B0DD45VPSL" required /></div>
                             <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px'}}>
                                 <div style={styles.formGroup}><label style={styles.label}>Giá bán</label><input type="number" step="0.01" style={styles.input} name="salePrice" value={existingProductInputs.salePrice} onChange={handleExistingInputChange} required /></div>
                                 <div style={styles.formGroup}><label style={styles.label}>Giá sản phẩm (Cost)</label><input type="number" step="0.01" style={styles.input} name="productCost" value={existingProductInputs.productCost} onChange={handleExistingInputChange} required /></div>

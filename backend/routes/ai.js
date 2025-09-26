@@ -78,13 +78,24 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
         if (chunk.agent) {
             (chunk.agent.messages || []).forEach(msg => {
                 finalMessages.push(msg); // Add agent's own messages to history
+                
+                // --- EMIT THOUGHT & ACTION ---
                 if (msg.tool_calls?.length) {
-                    const toolCall = msg.tool_calls[0];
-                    const thought = `🤖 Calling tool \`${toolCall.name}\` with args: ${JSON.stringify(toolCall.args)}`;
-                    res.write(`data: ${JSON.stringify({ type: 'thought', content: thought })}\n\n`);
+                    // Emit a general thought process if available as text content
+                    if (typeof msg.content === 'string' && msg.content.trim()) {
+                         res.write(`data: ${JSON.stringify({ type: 'thought', content: msg.content.trim() })}\n\n`);
+                    }
+
+                    // Emit each specific tool call as an action
+                    msg.tool_calls.forEach(toolCall => {
+                        const action = `${toolCall.name}[${JSON.stringify(toolCall.args)}]`;
+                        res.write(`data: ${JSON.stringify({ type: 'action', content: action })}\n\n`);
+                    });
+
                 } else if (msg.content && typeof msg.content === 'string') {
                      try {
                         const finalJson = JSON.parse(msg.content);
+                        // This is the final answer
                         res.write(`data: ${JSON.stringify({ type: 'result', content: finalJson })}\n\n`);
                     } catch (e) {
                          // This is likely a text response to a follow-up question
@@ -94,15 +105,13 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
             });
         }
         if (chunk.tools) {
-            // FIX: The `messages` property from a tool chunk can be a single object
-            // or an array. We must normalize it to always be an array to safely iterate.
             const toolMessages = chunk.tools.messages;
             const messagesArray = Array.isArray(toolMessages) ? toolMessages : [toolMessages].filter(Boolean);
 
             messagesArray.forEach(msg => {
-                finalMessages.push(msg); // Add tool results to history
-                const thought = `⚙️ Tool \`${msg.name}\` returned: ${msg.content}`;
-                res.write(`data: ${JSON.stringify({ type: 'thought', content: thought })}\n\n`);
+                finalMessages.push(msg);
+                // --- EMIT OBSERVATION ---
+                res.write(`data: ${JSON.stringify({ type: 'observation', content: msg.content })}\n\n`);
             });
         }
     }
