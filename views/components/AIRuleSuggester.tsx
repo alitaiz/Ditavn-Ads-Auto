@@ -48,6 +48,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     summaryTitle: { margin: '0 0 10px 0', fontSize: '1rem', fontWeight: 'bold' },
     summaryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 15px', fontSize: '0.9rem' },
     playbookList: { listStyleType: 'disc', paddingLeft: '20px', margin: 0 },
+    infoBox: { backgroundColor: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 'var(--border-radius)', padding: '15px', fontSize: '0.9rem', color: '#0050b3', marginBottom: '20px' },
 };
 
 export function AIRuleSuggester() {
@@ -122,6 +123,9 @@ export function AIRuleSuggester() {
 
     const renderExistingProductForm = () => (
         <>
+            <div style={styles.infoBox}>
+                <strong>Đề xuất Dựa trên Dữ liệu:</strong> Agent AI mới của chúng tôi, được hỗ trợ bởi LangChain, sẽ phân tích dữ liệu hiệu suất thực tế của sản phẩm trong khoảng thời gian bạn chọn. Nó sử dụng dữ liệu này, kết hợp với các thông số tài chính bạn cung cấp, để tạo ra một luật tự động hóa có tính liên quan cao và hiệu quả.
+            </div>
             <div style={styles.formGroup}>
                 <label style={styles.label}>ASIN</label>
                 <input style={styles.input} name="asin" value={existingProductInputs.asin} onChange={handleExistingInputChange} placeholder="B0..." required />
@@ -164,7 +168,6 @@ export function AIRuleSuggester() {
     
     const renderResult = () => {
         if (!result || !result.data) {
-            // Handle cases where AI returns no rule (e.g., no data found)
             return (
                 <div style={styles.resultCard}>
                     <p>{result?.reasoning || "Không có dữ liệu để tạo đề xuất. Vui lòng thử lại với một khoảng thời gian khác hoặc kiểm tra lại ASIN."}</p>

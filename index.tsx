@@ -1,6 +1,7 @@
+
 import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { PPCManagementView } from './views/PPCManagementView';
 import { AdGroupView } from './views/AdGroupView';
 import { KeywordView } from './views/KeywordView';
@@ -53,7 +54,7 @@ function App() {
   }, []); // Empty dependency array ensures this effect runs only once.
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/campaigns" replace />} />
@@ -67,7 +68,7 @@ function App() {
           <Route path="*" element={<Navigate to="/campaigns" replace />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 

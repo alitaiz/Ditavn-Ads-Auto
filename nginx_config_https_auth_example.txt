@@ -31,7 +31,22 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Cấu hình cho backend API VÀ bảo vệ bằng mật khẩu
+    # Cho phép AWS Lambda gửi dữ liệu stream mà không cần mật khẩu Basic Auth.
+    # Endpoint này vẫn được bảo vệ bởi một API key bí mật trong backend Node.js.
+    # 'location =' tạo một khối ưu tiên cao nhất cho đường dẫn chính xác này.
+    location = /api/stream-ingest {
+        proxy_pass http://localhost:4003;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Cấu hình cho TẤT CẢ các endpoint API khác VÀ bảo vệ chúng bằng mật khẩu
     location /api {
         # --- THÊM CÁC DÒNG BẢO MẬT SAU ---
         auth_basic "Restricted Content";
