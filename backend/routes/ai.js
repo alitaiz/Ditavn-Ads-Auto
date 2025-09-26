@@ -94,7 +94,12 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
             });
         }
         if (chunk.tools) {
-            (chunk.tools.messages || []).forEach(msg => {
+            // FIX: The `messages` property from a tool chunk can be a single object
+            // or an array. We must normalize it to always be an array to safely iterate.
+            const toolMessages = chunk.tools.messages;
+            const messagesArray = Array.isArray(toolMessages) ? toolMessages : [toolMessages].filter(Boolean);
+
+            messagesArray.forEach(msg => {
                 finalMessages.push(msg); // Add tool results to history
                 const thought = `⚙️ Tool \`${msg.name}\` returned: ${msg.content}`;
                 res.write(`data: ${JSON.stringify({ type: 'thought', content: thought })}\n\n`);
