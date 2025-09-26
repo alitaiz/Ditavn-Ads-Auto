@@ -1,6 +1,5 @@
 // backend/services/langchain/agent.js
 import { StateGraph, END } from "@langchain/langgraph";
-// FIX: Import SystemMessage and ToolMessage for robust type handling.
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { financialsTool, performanceSummaryTool } from "./tools.js";
@@ -40,16 +39,15 @@ const agentNode = async (state) => {
 const toolNode = async (state) => {
     console.log("[Agent] ==> toolNode (The Hands)");
     const { messages } = state;
-    // The last message should be an AI message with tool calls.
     const lastMessage = messages[messages.length - 1];
 
-    // FIX: Pass the entire AIMessage with tool_calls to the executor.
-    // The executor returns an object { tool_messages: ToolMessage[] }.
-    // We must correctly extract the array of ToolMessage objects.
-    const toolExecutorResponse = await toolExecutor.invoke(lastMessage);
-
-    // The response is { tool_messages: ToolMessage[] }. Add a safeguard.
-    const toolMessages = toolExecutorResponse.tool_messages ?? [];
+    // The `ToolExecutor` from `@langchain/langgraph/prebuilt` is designed to
+    // be called with an AIMessage and it returns an array of ToolMessages.
+    // The previous implementation was trying to access a `.tool_messages` property
+    // which might be incorrect depending on the exact version or context, leading
+    // to an empty or malformed list being added to the state. This simplified
+    // version directly uses the return value, which is more robust.
+    const toolMessages = await toolExecutor.invoke(lastMessage);
 
     return { messages: toolMessages };
 };
@@ -80,7 +78,6 @@ workflow.addConditionalEdges("agent", shouldContinue, { continue: "tools", end: 
 // Add the edge that loops back from the tools to the agent.
 workflow.addEdge("tools", "agent");
 
-// FIX: Use the SystemMessage class for better type safety and clarity.
 const systemMessage = new SystemMessage(`
     You are an expert Amazon PPC Analyst AI. Your goal is to help users create effective automation rules.
     Follow these steps for the initial request:
