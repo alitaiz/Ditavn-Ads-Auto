@@ -88,7 +88,9 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
                     // Emit each specific tool call as an action
                     msg.tool_calls.forEach(toolCall => {
-                        const action = `${toolCall.name}[${JSON.stringify(toolCall.args)}]`;
+                        // Pretty-print the JSON arguments for better readability in the UI.
+                        const argsString = JSON.stringify(toolCall.args, null, 2);
+                        const action = `${toolCall.name}[${argsString}]`;
                         res.write(`data: ${JSON.stringify({ type: 'action', content: action })}\n\n`);
                     });
 
