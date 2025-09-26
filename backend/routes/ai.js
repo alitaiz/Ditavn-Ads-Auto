@@ -100,14 +100,9 @@ const getExistingProductRule = async (productData, ruleType, dateRange) => {
         }
     };
 
-    // 2. Stream the agent's execution to get the final state.
-    let finalState;
-    // The `stream` method returns events as the agent runs. We wait for the final `end` event.
-    for await (const event of await agentApp.stream(agentInput)) {
-        if (event.end) {
-            finalState = event.end;
-        }
-    }
+    // 2. Invoke the agent to get the final state directly. This is more robust
+    //    than streaming when we only need the final result.
+    const finalState = await agentApp.invoke(agentInput);
 
     // 3. Handle potential errors from the agent.
     if (finalState.error) {
@@ -120,7 +115,17 @@ const getExistingProductRule = async (productData, ruleType, dateRange) => {
     }
 
     // 4. Construct the response for the frontend from the agent's final state.
-    const { financialMetrics, performanceData } = finalState;
+    const { financialMetrics, performanceData, finalResult } = finalState;
+
+    if (!finalResult) {
+        return {
+            type: 'rule',
+            rule: null,
+            reasoning: 'AI agent finished without producing a final result. This may be due to a logic error in the agent graph.',
+            dataSummary: null,
+        };
+    }
+
     const { profitPerUnit, breakEvenAcos } = financialMetrics;
     const { total_spend, total_sales } = performanceData;
 
@@ -137,7 +142,7 @@ const getExistingProductRule = async (productData, ruleType, dateRange) => {
         }
     };
     
-    const { rule, reasoning } = finalState.finalResult;
+    const { rule, reasoning } = finalResult;
 
     return { type: 'rule', rule, reasoning, dataSummary };
 };
