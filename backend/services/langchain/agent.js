@@ -30,23 +30,22 @@ const gatherDataNode = async (state) => {
 
     try {
         // Use tools to get financial and performance data.
-        // FIX: Explicitly create an object for the tool with only the required properties.
-        // This prevents issues where extra properties on `productData` (like 'asin')
-        // might confuse the tool's input parsing, leading to it receiving 'undefined'.
+        // The tools expect a single JSON string as input.
         const financialInput = {
             salePrice: productData.salePrice,
             productCost: productData.productCost,
             fbaFee: productData.fbaFee,
             referralFeePercent: productData.referralFeePercent,
         };
-        const financialResultStr = await financialsTool.invoke(financialInput);
+        const financialResultStr = await financialsTool.invoke(JSON.stringify(financialInput));
         const financialMetrics = JSON.parse(financialResultStr);
 
-        const performanceResultStr = await performanceSummaryTool.invoke({
+        const performanceInput = {
             asin: productData.asin,
             startDate: dateRange.start,
             endDate: dateRange.end,
-        });
+        };
+        const performanceResultStr = await performanceSummaryTool.invoke(JSON.stringify(performanceInput));
 
         // Check if performance data was found.
         const performanceData = performanceResultStr.startsWith("No performance data") 
