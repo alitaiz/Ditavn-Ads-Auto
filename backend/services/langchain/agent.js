@@ -78,23 +78,31 @@ const analystAndFormatNode = async (state) => {
 
     // Build a detailed prompt for the Gemini model.
     const prompt = `
-        BẠN LÀ MỘT TRỢ LÝ AI CHUYÊN GIA VỀ TỐI ƯU HÓA AMAZON PPC.
-        Nhiệm vụ của bạn là phân tích dữ liệu được cung cấp và đề xuất một luật tự động hóa PPC hiệu quả bằng tiếng Việt.
-        Phản hồi của bạn PHẢI là một đối tượng JSON hợp lệ duy nhất, chứa 'rule' và 'reasoning'.
+        BẠN LÀ MỘT TRỢ LÝ AI CHUYÊN GIA VỀ TỐI ƯU HÓA AMAZON PPC VỚI NHIỀU NĂM KINH NGHIỆM.
+        Nhiệm vụ của bạn là thực hiện một phân tích chi tiết theo từng bước và đề xuất một luật tự động hóa PPC thông minh.
 
-        LƯU Ý QUAN TRỌNG VỀ LOGIC: Hệ thống xử lý các Nhóm Điều kiện (conditionGroups) theo thứ tự từ trên xuống dưới ("First Match Wins"). Ngay khi một thực thể khớp với TẤT CẢ các điều kiện trong một nhóm, hành động của nhóm đó sẽ được thực thi và hệ thống sẽ NGỪNG xử lý. Vì vậy, hãy đặt các điều kiện cụ thể nhất hoặc mang tính "cắt lỗ" (ví dụ: giảm bid mạnh) lên trên cùng.
+        **Bối cảnh:**
+        - Sản phẩm có các chỉ số tài chính sau:
+            - Lợi nhuận mỗi đơn vị: $${profitPerUnit.toFixed(2)}
+            - ACoS Hòa vốn: ${breakEvenAcos.toFixed(2)}% (Đây là mức ACoS tối đa để không bị lỗ)
+            - ACoS Mục tiêu: ${targetAcos.toFixed(2)}% (Mức ACoS lý tưởng để có lợi nhuận)
+        - Hiệu suất tổng thể trong khoảng thời gian đã chọn:
+            - Tổng chi tiêu quảng cáo: $${parseFloat(total_spend).toFixed(2)}
+            - Tổng doanh số từ quảng cáo: $${parseFloat(total_sales).toFixed(2)}
+            - ACoS Tổng thể: ${overallAcos.toFixed(2)}%
 
-        Dữ liệu phân tích:
-        - Chỉ số Tài chính:
-          - Lợi nhuận mỗi đơn vị: $${profitPerUnit.toFixed(2)}
-          - ACoS Hòa vốn: ${breakEvenAcos.toFixed(2)}%
-          - ACoS Mục tiêu: ${targetAcos.toFixed(2)}%
-        - Hiệu suất Tổng thể:
-          - Tổng chi tiêu: $${parseFloat(total_spend).toFixed(2)}
-          - Tổng doanh số: $${parseFloat(total_sales).toFixed(2)}
-          - ACoS Tổng thể: ${overallAcos.toFixed(2)}%
+        **Quy trình Phân tích (Hãy suy nghĩ theo các bước sau):**
+        1.  **So sánh Hiệu suất:** So sánh ACoS Tổng thể (${overallAcos.toFixed(2)}%) với ACoS Mục tiêu (${targetAcos.toFixed(2)}%) và ACoS Hòa vốn (${breakEvenAcos.toFixed(2)}%). Hiệu suất hiện tại đang tốt, xấu, hay rất xấu?
+        2.  **Xác định Vấn đề Cốt lõi:** Dựa trên so sánh ở bước 1, vấn đề chính là gì? (Ví dụ: "ACoS hiện tại cao hơn nhiều so với mục tiêu, cho thấy chi tiêu quảng cáo chưa hiệu quả", hoặc "ACoS thấp hơn mục tiêu, có cơ hội để tăng bid và mở rộng quy mô").
+        3.  **Đề xuất Giải pháp:** Dựa trên vấn đề, đề xuất một chiến lược chung. (Ví dụ: "Cần một luật để cắt giảm chi tiêu lãng phí cho các từ khóa không hiệu quả", hoặc "Cần một luật để tăng bid cho các từ khóa đang hoạt động tốt").
+        4.  **Xây dựng Rule Chi tiết:** Dựa trên chiến lược, tạo ra một rule cụ thể. Hãy giải thích tại sao bạn chọn các chỉ số, khoảng thời gian và giá trị cụ thể trong rule. Sử dụng nguyên tắc "First Match Wins" bằng cách đặt các điều kiện nghiêm ngặt nhất (ví dụ: cắt lỗ) lên trên.
+        5.  **Tạo JSON Output:** Dựa trên các bước trên, tạo ra đối tượng JSON cuối cùng.
 
-        Yêu cầu: Dựa trên dữ liệu trên, hãy đề xuất một luật "${ruleType}".
+        **Yêu cầu:** Hãy tạo một luật loại "${ruleType}".
+        
+        **Output:** Phản hồi của bạn PHẢI là một đối tượng JSON hợp lệ duy nhất, chứa hai khóa:
+        1.  **"rule"**: Một đối tượng JSON chứa cấu hình rule tự động hóa.
+        2.  **"reasoning"**: Một chuỗi (string) giải thích chi tiết quy trình suy nghĩ của bạn (bao gồm các bước 1-4 ở trên) bằng tiếng Việt.
     `;
     
     // Call the model and parse the output.

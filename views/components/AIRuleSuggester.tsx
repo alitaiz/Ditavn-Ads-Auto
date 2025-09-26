@@ -167,10 +167,12 @@ export function AIRuleSuggester() {
     );
     
     const renderResult = () => {
-        if (!result || !result.data) {
+        if (!result) return null;
+    
+        if (!result.data) {
             return (
                 <div style={styles.resultCard}>
-                    <p>{result?.reasoning || "Không có dữ liệu để tạo đề xuất. Vui lòng thử lại với một khoảng thời gian khác hoặc kiểm tra lại ASIN."}</p>
+                    <p>{result.reasoning || "Không có dữ liệu để tạo đề xuất. Vui lòng thử lại với một khoảng thời gian khác hoặc kiểm tra lại ASIN."}</p>
                 </div>
             );
         }
@@ -182,24 +184,13 @@ export function AIRuleSuggester() {
                     {result.dataSummary && <DataSummary summary={result.dataSummary} />}
                     <div style={styles.resultCard}>
                         <h2 style={styles.resultTitle}>Lý do Đề xuất</h2>
-                        <p>{result.reasoning || "AI không cung cấp lý do."}</p>
+                        <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{result.reasoning || "AI không cung cấp lý do."}</p>
                     </div>
                     <div style={styles.resultCard}>
                         <h2 style={styles.resultTitle}>Rule Được Đề xuất: {rule.name}</h2>
-                        {(rule.config?.conditionGroups || []).map((group: any, i: number) => (
-                            <div key={i} style={{ border: '1px solid #eee', padding: '10px', borderRadius: '4px', margin: '10px 0' }}>
-                                <p style={{ margin: 0, fontWeight: 'bold' }}>{i > 0 && 'HOẶC '}NẾU:</p>
-                                <ul style={{ margin: '5px 0', paddingLeft: '20px' }}>
-                                    {group.conditions.map((cond: any, j: number) => (
-                                        <li key={j}>
-                                            <strong>{cond.metric}</strong> trong <strong>{cond.timeWindow === 'TODAY' ? 'Hôm nay' : `${cond.timeWindow} ngày`}</strong> qua là <strong>{cond.operator} {cond.value}</strong>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <p style={{ margin: 0, fontWeight: 'bold' }}>THÌ:</p>
-                                <p style={{ margin: '5px 0 0 20px', fontFamily: 'monospace' }}>{JSON.stringify(group.action)}</p>
-                            </div>
-                        ))}
+                        <p style={{fontFamily: 'monospace', whiteSpace: 'pre-wrap', backgroundColor: '#f8f9fa', padding: '15px', borderRadius: '4px', border: '1px solid #eee', lineHeight: 1.7}}>
+                           Tối ưu hóa Bid dựa trên ACoS (Mục tiêu {result.dataSummary?.financial.targetAcos?.toFixed(2)}%)
+                        </p>
                     </div>
                 </>
             );
@@ -261,12 +252,12 @@ export function AIRuleSuggester() {
                 <div style={styles.resultsContainer}>
                     {loading && <div style={styles.loaderContainer}><div style={styles.loader}></div></div>}
                     {error && <div style={styles.error}>{error}</div>}
-                    {result && renderResult()}
                     {!loading && !error && !result && (
                         <div style={styles.placeholder}>
                            <p>Đề xuất của AI sẽ được hiển thị ở đây.</p>
                         </div>
                     )}
+                    {result && renderResult()}
                 </div>
             </div>
         </div>
@@ -288,7 +279,6 @@ const DataSummary = ({ summary }: { summary: any }) => {
                 <span>Tổng chi tiêu:</span> <strong>${performance.totalSpend?.toFixed(2)}</strong>
                 <span>Tổng doanh số:</span> <strong>${performance.totalSales?.toFixed(2)}</strong>
             </div>
-            {performance.campaignIds?.length > 0 && <p style={{fontSize: '0.8rem', marginTop: '10px', color: '#555'}}>Đã phân tích dữ liệu từ {performance.campaignIds.length} chiến dịch liên quan.</p>}
         </div>
     );
 };
