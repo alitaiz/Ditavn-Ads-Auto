@@ -30,7 +30,16 @@ const gatherDataNode = async (state) => {
 
     try {
         // Use tools to get financial and performance data.
-        const financialResultStr = await financialsTool.invoke(productData);
+        // FIX: Explicitly create an object for the tool with only the required properties.
+        // This prevents issues where extra properties on `productData` (like 'asin')
+        // might confuse the tool's input parsing, leading to it receiving 'undefined'.
+        const financialInput = {
+            salePrice: productData.salePrice,
+            productCost: productData.productCost,
+            fbaFee: productData.fbaFee,
+            referralFeePercent: productData.referralFeePercent,
+        };
+        const financialResultStr = await financialsTool.invoke(financialInput);
         const financialMetrics = JSON.parse(financialResultStr);
 
         const performanceResultStr = await performanceSummaryTool.invoke({
