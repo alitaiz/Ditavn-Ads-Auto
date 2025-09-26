@@ -88,32 +88,32 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                     msg.tool_calls.forEach(toolCall => {
                         let argsString;
                         try {
-                            let parsedArgs = {};
-                            let isFullyParsed = true;
-                            for (const key in toolCall.args) {
-                                try { parsedArgs[key] = JSON.parse(toolCall.args[key]); }
-                                catch (e) { isFullyParsed = false; break; }
-                            }
-                            argsString = isFullyParsed ? JSON.stringify(parsedArgs, null, 2) : JSON.stringify(toolCall.args, null, 2);
-                        } catch (e) {
+                            // Pretty-print the JSON arguments for better readability in the trace
                             argsString = JSON.stringify(toolCall.args, null, 2);
+                        } catch (e) {
+                            // Fallback for non-JSON or malformed args
+                            argsString = JSON.stringify(toolCall.args);
                         }
-                        const action = `${toolCall.name}[${argsString}]`;
+                        const action = `${toolCall.name}${argsString}`;
                         res.write(`data: ${JSON.stringify({ type: 'action', content: action })}\n\n`);
                     });
 
                 } else if (msg.content && typeof msg.content === 'string') {
                      try {
-                        let contentStr = msg.content.trim();
-                        if (contentStr.startsWith("```json")) {
-                            contentStr = contentStr.substring(7, contentStr.length - 3).trim();
-                        } else if (contentStr.startsWith("```")) {
-                            contentStr = contentStr.substring(3, contentStr.length - 3).trim();
+                        // FIX: Use a robust regex to extract JSON from a string, even if it's wrapped in markdown.
+                        const jsonRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+                        const match = msg.content.match(jsonRegex);
+                        let finalJson;
+
+                        if (match && match[1]) {
+                            // If a JSON block is found in markdown, parse its content.
+                            finalJson = JSON.parse(match[1]);
+                        } else {
+                            // Otherwise, assume the entire content is the JSON string.
+                            finalJson = JSON.parse(msg.content);
                         }
                         
-                        const finalJson = JSON.parse(contentStr);
-
-                        // --- NEW: Generate Natural Language Summary ---
+                        // --- Generate Natural Language Summary ---
                         try {
                             const summaryPrompt = `Dựa trên đối tượng JSON sau đây chứa một đề xuất rule PPC và lý do, hãy viết một bản tóm tắt bằng ngôn ngữ tự nhiên, thân thiện cho người dùng. Giải thích ngắn gọn rule đó làm gì và tại sao nó được đề xuất. JSON:\n\n${JSON.stringify(finalJson, null, 2)}`;
                             const summaryResponse = await ai.models.generateContent({
@@ -126,14 +126,13 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                              console.error("Failed to generate summary:", summaryError);
                              // If summary fails, still send the main result
                         }
-                        // --- END NEW ---
+                        // --- END ---
 
                         // Always stream the structured JSON result
                         res.write(`data: ${JSON.stringify({ type: 'result', content: finalJson })}\n\n`);
 
                     } catch (e) {
                          // This is a text response to a follow-up question.
-                         // FIX: Wrap it in the standard 'agent' message format.
                          res.write(`data: ${JSON.stringify({ type: 'agent', content: msg.content })}\n\n`);
                     }
                 }
