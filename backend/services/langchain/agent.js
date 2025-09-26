@@ -11,11 +11,20 @@ import { ToolExecutor } from "@langchain/langgraph/prebuilt";
 const tools = [financialsTool, performanceSummaryTool];
 const toolExecutor = new ToolExecutor({ tools });
 
-// 2. Define the model and bind the tools to it.
-const model = new ChatGoogleGenerativeAI({
+// 2. Define two model instances for a more robust, two-step process.
+//    - modelWithTools: Used by the agent to decide which tools to call.
+//    - finalResponseModel: Used by the analyst to generate the final answer AFTER tools have run.
+//      Crucially, this model does not have tools bound to it, preventing loops.
+const modelWithTools = new ChatGoogleGenerativeAI({
     model: "gemini-2.5-flash",
     apiKey: process.env.GEMINI_API_KEY
 }).bindTools(tools);
+
+const finalResponseModel = new ChatGoogleGenerativeAI({
+    model: "gemini-2.5-flash",
+    apiKey: process.env.GEMINI_API_KEY
+});
+
 
 // 3. Define the Agent's State. It's a list of messages that serves as its memory.
 const agentState = {
@@ -27,11 +36,11 @@ const agentState = {
 
 // --- Agent Nodes ---
 
-// Node 1: The "Agent" or "Brain" - Decides what to do next.
+// Node 1: The "Agent" or "Brain" - Decides which tools to call based on the input.
 const agentNode = async (state) => {
     console.log("[Agent] ==> agentNode (The Brain)");
     const { messages } = state;
-    const response = await model.invoke(messages);
+    const response = await modelWithTools.invoke(messages);
     return { messages: [response] };
 };
 
@@ -40,12 +49,19 @@ const toolNode = async (state) => {
     console.log("[Agent] ==> toolNode (The Hands)");
     const { messages } = state;
     const lastMessage = messages[messages.length - 1];
-
-    // The `ToolExecutor` from `@langchain/langgraph/prebuilt` is designed to
-    // be called with an AIMessage and it returns an array of ToolMessages.
     const toolMessages = await toolExecutor.invoke(lastMessage);
-
     return { messages: toolMessages };
+};
+
+// Node 3 (NEW): The "Analyst" - Generates the final response after tools have run.
+const finalResponseNode = async (state) => {
+    console.log("[Agent] ==> finalResponseNode (The Analyst)");
+    const { messages } = state;
+    // The system prompt is prepended automatically. The prompt tells the model
+    // what to do after it gets tool results. By using a model without tools,
+    // we prevent it from trying to call them again.
+    const response = await finalResponseModel.invoke(messages);
+    return { messages: [response] };
 };
 
 
@@ -54,7 +70,8 @@ const toolNode = async (state) => {
 // This function determines whether to continue with tool execution or end the cycle.
 const shouldContinue = (state) => {
     const lastMessage = state.messages[state.messages.length - 1];
-    // If the last message has tool calls, we continue. Otherwise, we end.
+    // If the last message from the agent has tool calls, we continue to the tools.
+    // Otherwise, we end (e.g., for a simple chat response).
     return lastMessage.tool_calls?.length ? "continue" : "end";
 };
 
@@ -64,15 +81,22 @@ const workflow = new StateGraph({ channels: agentState });
 // Add the nodes to the graph.
 workflow.addNode("agent", agentNode);
 workflow.addNode("tools", toolNode);
+workflow.addNode("finalResponse", finalResponseNode); // Add the new analyst node
 
 // Set the entry point for the graph.
 workflow.setEntryPoint("agent");
 
-// Add the conditional logic for routing.
-workflow.addConditionalEdges("agent", shouldContinue, { continue: "tools", end: END });
+// Add the conditional logic for routing from the agent.
+workflow.addConditionalEdges("agent", shouldContinue, {
+    continue: "tools", // If tools are called, go to the tool node.
+    end: END,          // If no tools are called, end the process.
+});
 
-// Add the edge that loops back from the tools to the agent.
-workflow.addEdge("tools", "agent");
+// Define the new, non-looping workflow.
+// After the tools run, ALWAYS go to the finalResponseNode to analyze the results.
+workflow.addEdge("tools", "finalResponse");
+// After the final response is generated, the process is complete.
+workflow.addEdge("finalResponse", END);
 
 const systemMessage = new SystemMessage(`
     You are an expert Amazon PPC Analyst AI. Your goal is to help users create effective automation rules. Your thought process and responses should be in Vietnamese.

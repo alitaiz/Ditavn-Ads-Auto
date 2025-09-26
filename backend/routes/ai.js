@@ -76,7 +76,7 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
     for await (const chunk of stream) {
         if (chunk.agent) {
-            (chunk.agent.messages || []).forEach(msg => {
+            (chunk.agent.messages || []).forEach(async msg => {
                 finalMessages.push(msg); // Add agent's own messages to history
                 
                 // --- EMIT THOUGHT & ACTION ---
@@ -88,16 +88,11 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                     msg.tool_calls.forEach(toolCall => {
                         let argsString;
                         try {
-                            // Attempt to parse nested JSON for better formatting if the model stringifies its args.
                             let parsedArgs = {};
                             let isFullyParsed = true;
                             for (const key in toolCall.args) {
-                                try {
-                                    parsedArgs[key] = JSON.parse(toolCall.args[key]);
-                                } catch (e) {
-                                    isFullyParsed = false;
-                                    break; 
-                                }
+                                try { parsedArgs[key] = JSON.parse(toolCall.args[key]); }
+                                catch (e) { isFullyParsed = false; break; }
                             }
                             argsString = isFullyParsed ? JSON.stringify(parsedArgs, null, 2) : JSON.stringify(toolCall.args, null, 2);
                         } catch (e) {
@@ -109,7 +104,6 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
                 } else if (msg.content && typeof msg.content === 'string') {
                      try {
-                        // FIX: Robustly strip markdown wrappers from the JSON response
                         let contentStr = msg.content.trim();
                         if (contentStr.startsWith("```json")) {
                             contentStr = contentStr.substring(7, contentStr.length - 3).trim();
@@ -118,10 +112,29 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                         }
                         
                         const finalJson = JSON.parse(contentStr);
+
+                        // --- NEW: Generate Natural Language Summary ---
+                        try {
+                            const summaryPrompt = `Dựa trên đối tượng JSON sau đây chứa một đề xuất rule PPC và lý do, hãy viết một bản tóm tắt bằng ngôn ngữ tự nhiên, thân thiện cho người dùng. Giải thích ngắn gọn rule đó làm gì và tại sao nó được đề xuất. JSON:\n\n${JSON.stringify(finalJson, null, 2)}`;
+                            const summaryResponse = await ai.models.generateContent({
+                                model: 'gemini-2.5-flash',
+                                contents: summaryPrompt,
+                            });
+                            // Stream the natural language summary first
+                            res.write(`data: ${JSON.stringify({ type: 'agent', content: summaryResponse.text })}\n\n`);
+                        } catch(summaryError) {
+                             console.error("Failed to generate summary:", summaryError);
+                             // If summary fails, still send the main result
+                        }
+                        // --- END NEW ---
+
+                        // Always stream the structured JSON result
                         res.write(`data: ${JSON.stringify({ type: 'result', content: finalJson })}\n\n`);
+
                     } catch (e) {
-                         // This is likely a text response to a follow-up question
-                         res.write(msg.content);
+                         // This is a text response to a follow-up question.
+                         // FIX: Wrap it in the standard 'agent' message format.
+                         res.write(`data: ${JSON.stringify({ type: 'agent', content: msg.content })}\n\n`);
                     }
                 }
             });
