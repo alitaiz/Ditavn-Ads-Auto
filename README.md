@@ -18,7 +18,6 @@
     -   **Điều chỉnh Bid (Bid Adjustment):** Tạo các luật IF/THEN phức tạp để tự động tăng/giảm giá thầu dựa trên ACOS, ROAS, clicks, orders, và nhiều chỉ số khác.
     -   **Quản lý Search Term (Search Term Automation):** Tự động phủ định các search term không hiệu quả (dựa trên chi tiêu, số clicks không ra đơn, v.v.).
     -   **Tăng tốc Ngân sách (Budget Acceleration):** Tự động tăng ngân sách trong ngày cho các chiến dịch đang hoạt động hiệu quả để không bỏ lỡ doanh thu và tự động khôi phục vào cuối ngày.
-    -   **(Mới) AI Suggester nâng cao:** Tích hợp LangChain và LangGraph để AI có thể tự truy vấn và phân tích dữ liệu, đưa ra các đề xuất rule thông minh và chính xác hơn.
 
 -   **Kiến trúc Tự Host & Tiết kiệm:**
     -   Triển khai trên VPS Ubuntu với PostgreSQL, giúp bạn làm chủ hoàn toàn dữ liệu của mình.
@@ -41,9 +40,6 @@
 4.  **Giai đoạn 4: Bảo mật Ứng dụng**
     -   Kích hoạt HTTPS: `5.SECURITY_SSL_CERTBOT_GUIDE.md`
     -   Thêm lớp mật khẩu: `6.SECURITY_NGINX_BASIC_AUTH_GUIDE.md`
-
-5.  **(Nâng cao) Tích hợp AI Agent với LangChain & LangGraph**
-    -   Xem file: `15.LANGCHAIN_LANGGRAPH_INTEGRATION_GUIDE.md`
 
 ## Chạy trên Máy tính Cá nhân (Local Development)
 

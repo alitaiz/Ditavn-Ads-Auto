@@ -2,7 +2,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AutomationRule, AutomationRuleCondition, AutomationConditionGroup, AutomationRuleAction } from '../types';
 import { RuleGuideContent } from './components/RuleGuideContent';
-import { AIRuleSuggester } from './components/AIRuleSuggester';
 
 const styles: { [key: string]: React.CSSProperties } = {
   container: { maxWidth: '1200px', margin: '0 auto', padding: '20px' },
@@ -152,7 +151,6 @@ const TABS = [
     { id: 'SEARCH_TERM_AUTOMATION', label: 'SP Search Term', type: 'SEARCH_TERM_AUTOMATION', adType: 'SP' },
     { id: 'BUDGET_ACCELERATION', label: 'SP Budget', type: 'BUDGET_ACCELERATION', adType: 'SP' },
     { id: 'PRICE_ADJUSTMENT', label: 'Change Price', type: 'PRICE_ADJUSTMENT' },
-    { id: 'AI_SUGGESTER', label: 'AI Suggester' },
     { id: 'HISTORY', label: 'History' },
     { id: 'GUIDE', label: 'Guide' },
 ];
@@ -294,7 +292,6 @@ export function AutomationView() {
           </div>
       )}
 
-      {activeTabId === 'AI_SUGGESTER' && <AIRuleSuggester />}
       {activeTabId === 'HISTORY' && <LogsTab logs={logs} loading={loading.logs} />}
       {activeTabId === 'GUIDE' && <RuleGuideContent />}
       {activeTab && 'type' in activeTab && activeTab.type && <RulesList rules={filteredRules} onEdit={handleOpenModal} onDelete={handleDeleteRule} onDuplicate={handleDuplicateRule} />}
