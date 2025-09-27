@@ -97,34 +97,48 @@ router.post('/ai/tool/stream', async (req, res) => {
         return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
     }
     try {
-        // Step 1: Infer Campaign IDs from ASIN in the search term report
+        // Step 1: Infer Campaign IDs from ASIN using a fixed historical lookback.
+        // This decouples campaign discovery from the user's selected date range for stream data,
+        // making it more robust against the 2-day lag in report data.
+        const lookbackStartDate = new Date(endDate);
+        lookbackStartDate.setDate(lookbackStartDate.getDate() - 29); // 30-day lookback
+        const lookbackStartDateStr = lookbackStartDate.toISOString().split('T')[0];
+        
+        console.log(`[AI Tool/Stream] Finding campaign IDs for ASIN ${asin} using report data from ${lookbackStartDateStr} to ${endDate}`);
+
         const campaignIdQuery = `
             SELECT DISTINCT campaign_id 
             FROM sponsored_products_search_term_report 
             WHERE asin = $1 AND report_date BETWEEN $2 AND $3;
         `;
-        const campaignIdResult = await pool.query(campaignIdQuery, [asin, startDate, endDate]);
+        const campaignIdResult = await pool.query(campaignIdQuery, [asin, lookbackStartDateStr, endDate]);
         const campaignIds = campaignIdResult.rows.map(r => r.campaign_id);
 
         if (campaignIds.length === 0) {
+            console.log(`[AI Tool/Stream] No campaigns found for ASIN ${asin} in the last 30 days of report data. Returning empty stream data.`);
             return res.json([]);
         }
         
-        // Step 2: Fetch and aggregate stream data for those campaign IDs
+        console.log(`[AI Tool/Stream] Found ${campaignIds.length} associated campaign(s). Fetching stream data from ${startDate} to ${endDate}.`);
+
+        // Step 2: Fetch and aggregate stream data for those campaign IDs using the user's selected date range.
+        // The date range logic is made inclusive of the full end date.
         const streamQuery = `
             WITH traffic AS (
                 SELECT SUM((event_data->>'cost')::numeric) as spend, SUM((event_data->>'clicks')::bigint) as clicks
                 FROM raw_stream_events
                 WHERE event_type = 'sp-traffic'
                 AND (event_data->>'campaign_id')::bigint = ANY($1)
-                AND (event_data->>'time_window_start')::timestamptz BETWEEN $2 AND $3
+                AND (event_data->>'time_window_start')::timestamptz >= $2::date
+                AND (event_data->>'time_window_start')::timestamptz < ($3::date + interval '1 day')
             ),
             conversion AS (
                 SELECT SUM((event_data->>'attributed_sales_1d')::numeric) as sales, SUM((event_data->>'attributed_conversions_1d')::bigint) as orders
                 FROM raw_stream_events
                 WHERE event_type = 'sp-conversion'
                 AND (event_data->>'campaign_id')::bigint = ANY($1)
-                AND (event_data->>'time_window_start')::timestamptz BETWEEN $2 AND $3
+                AND (event_data->>'time_window_start')::timestamptz >= $2::date
+                AND (event_data->>'time_window_start')::timestamptz < ($3::date + interval '1 day')
             )
             SELECT * FROM traffic, conversion;
         `;
