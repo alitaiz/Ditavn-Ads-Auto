@@ -34,18 +34,18 @@ interface ChatMessage {
 
 export function AICopilotView() {
     // Input states
-    const [asin, setAsin] = useState('');
-    const [salePrice, setSalePrice] = useState('');
-    const [cost, setCost] = useState('');
-    const [fbaFee, setFbaFee] = useState('');
+    const [asin, setAsin] = useState('B0DD45VPSL');
+    const [salePrice, setSalePrice] = useState('27');
+    const [cost, setCost] = useState('7');
+    const [fbaFee, setFbaFee] = useState('7.4');
     const [referralFeePercent, setReferralFeePercent] = useState('15');
-    const [startDate, setStartDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 8); return d.toISOString().split('T')[0]; });
-    const [endDate, setEndDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0]; });
+    const [startDate, setStartDate] = useState('2025-09-01');
+    const [endDate, setEndDate] = useState('2025-09-26');
 
     // Loaded data states
-    const [searchTermData, setSearchTermData] = useState(null);
-    const [streamData, setStreamData] = useState(null);
-    const [salesTrafficData, setSalesTrafficData] = useState(null);
+    const [searchTermData, setSearchTermData] = useState<any[] | null>(null);
+    const [streamData, setStreamData] = useState<any[] | null>(null);
+    const [salesTrafficData, setSalesTrafficData] = useState<any[] | null>(null);
 
     // Loading & error states for tools
     const [loading, setLoading] = useState({ st: false, stream: false, sat: false, chat: false });
@@ -108,10 +108,12 @@ export function AICopilotView() {
         
         setLoading(prev => ({...prev, chat: true}));
         setError(prev => ({...prev, chat: ''}));
+        const questionToAsk = currentQuestion;
+        setCurrentQuestion(''); // Clear input after sending
 
         try {
             const payload = {
-                question: currentQuestion,
+                question: questionToAsk,
                 conversationId: conversationId,
                 context: {
                     productInfo: { asin, salePrice, cost, fbaFee, referralFeePercent },
@@ -132,7 +134,6 @@ export function AICopilotView() {
             const decoder = new TextDecoder();
             let aiResponseText = '';
             let isFirstChunk = true;
-            let newConversationId: string | null = null;
             let currentAiMessageId = Date.now() + 1;
 
             while (true) {
@@ -148,8 +149,9 @@ export function AICopilotView() {
                         if (parsed.error) throw new Error(parsed.error);
 
                         if (isFirstChunk) {
-                            newConversationId = parsed.conversationId;
-                            setConversationId(newConversationId);
+                            if (parsed.conversationId) {
+                                setConversationId(parsed.conversationId);
+                            }
                             setMessages(prev => [...prev, { id: currentAiMessageId, sender: 'ai', text: '' }]);
                             isFirstChunk = false;
                         }
@@ -170,7 +172,6 @@ export function AICopilotView() {
             setError(prev => ({...prev, chat: err instanceof Error ? err.message : 'An unknown error occurred'}));
         } finally {
              setLoading(prev => ({...prev, chat: false}));
-             setCurrentQuestion('');
         }
     };
 
@@ -211,25 +212,27 @@ export function AICopilotView() {
             </div>
             <div style={styles.rightPanel}>
                 <div style={styles.chatWindow} ref={chatEndRef}>
-                    {messages.length === 0 && <p style={{textAlign: 'center', color: '#888'}}>Your conversation with the AI Co-Pilot will appear here.</p>}
+                    {messages.length === 0 && <p style={{textAlign: 'center', color: '#888'}}>Load data and ask a question to start your conversation.</p>}
                     {messages.map(msg => (
                         <div key={msg.id} style={{...styles.message, ...(msg.sender === 'user' ? styles.userMessage : styles.aiMessage), display: 'flex', flexDirection: 'column'}}>
                              <div dangerouslySetInnerHTML={{ __html: marked(msg.text) }}></div>
                         </div>
                     ))}
-                    {loading.chat && <div style={{...styles.message, ...styles.aiMessage}}><em style={{color: '#666'}}>AI is thinking...</em></div>}
+                    {loading.chat && messages.length > 0 && messages[messages.length - 1].sender === 'user' && (
+                        <div style={{...styles.message, ...styles.aiMessage}}><em style={{color: '#666'}}>AI is thinking...</em></div>
+                    )}
                     {error.chat && <div style={{...styles.message, ...styles.aiMessage, backgroundColor: '#fdd', color: 'var(--danger-color)'}}>{error.chat}</div>}
                 </div>
                 <form style={styles.chatInputForm} onSubmit={handleStartConversation}>
-                    <input style={styles.chatInput} value={currentQuestion} onChange={e => setCurrentQuestion(e.target.value)} placeholder="Ask a follow-up question..." disabled={loading.chat} />
-                    <button type="submit" style={styles.sendButton} disabled={loading.chat || messages.length === 0}>Send</button>
+                    <input style={styles.chatInput} value={currentQuestion} onChange={e => setCurrentQuestion(e.target.value)} placeholder="Ask a question about the loaded data..." disabled={loading.chat} />
+                    <button type="submit" style={styles.sendButton} disabled={loading.chat || !currentQuestion.trim()}>Send</button>
                 </form>
             </div>
         </div>
     );
 }
 
-const ToolButton = ({ tool, onRun, loading, data, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, data: any, error: string, name: string }) => (
+const ToolButton = ({ tool, onRun, loading, data, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, data: any[] | null, error: string, name: string }) => (
     <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 500 }}>{name}</span>

@@ -20,11 +20,10 @@ User will provide you with several pieces of data:
 
 Your Task:
 1.  **Always start by acknowledging the data provided.** If some data is missing (e.g., no stream data), mention it.
-2.  **Use your tools** to perform initial calculations on the provided data.
-3.  Answer the user's initial question based on your calculations and the data.
-4.  Present your analysis clearly, using formatting like lists and bold text.
-5.  If you suggest creating an automation rule, provide the JSON for it in a markdown code block.
-6.  Be ready to answer follow-up questions, remembering the context of the data you were initially given.`;
+2.  Answer the user's initial question based on the provided data.
+3.  Present your analysis clearly, using formatting like lists and bold text.
+4.  If you suggest creating an automation rule, provide the JSON for it in a markdown code block.
+5.  Be ready to answer follow-up questions, remembering the context of the data you were initially given.`;
 
 // --- Tool Endpoints (for Frontend to pre-load data) ---
 
@@ -70,7 +69,7 @@ router.post('/ai/tool/stream', async (req, res) => {
         const campaignIds = campaignIdResult.rows.map(r => r.campaign_id);
 
         if (campaignIds.length === 0) {
-            return res.json({ message: "No campaigns found for this ASIN in the selected date range. Cannot fetch stream data." });
+            return res.json([]);
         }
         
         // Step 2: Fetch and aggregate stream data for those campaign IDs
@@ -144,9 +143,12 @@ router.post('/ai/chat', async (req, res) => {
         });
 
         const chat = model.startChat({ history });
-
-        // Build a comprehensive prompt with all the context provided by the user
-        const contextPrompt = `
+        
+        let currentMessage;
+        // If it's the start of a new conversation, build the detailed context prompt.
+        // Otherwise, just use the user's follow-up question.
+        if (history.length === 0) {
+            currentMessage = `
 Here is the data context for my question. Please analyze it before answering.
 
 **Product Information:**
@@ -164,8 +166,11 @@ Here is the data context for my question. Please analyze it before answering.
 **My Initial Question:**
 ${question}
 `;
+        } else {
+            currentMessage = question;
+        }
 
-        const result = await chat.sendMessageStream(contextPrompt);
+        const result = await chat.sendMessageStream(currentMessage);
 
         let firstChunk = true;
         for await (const chunk of result.stream) {
@@ -182,7 +187,7 @@ ${question}
         const fullResponse = await result.response;
         const newHistory = [
             ...history,
-            { role: 'user', parts: [{ text: contextPrompt }] },
+            { role: 'user', parts: [{ text: currentMessage }] },
             { role: 'model', parts: [{ text: fullResponse.text() }] }
         ];
         conversations.set(conversationId, newHistory);
