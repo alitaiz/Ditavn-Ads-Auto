@@ -11,19 +11,24 @@ const conversations = new Map(); // In-memory store for conversation history
 
 const getSystemInstruction = () => `You are an expert Amazon PPC Analyst named "Co-Pilot". Your goal is to help users analyze performance data and provide strategic advice.
 
-User will provide you with several pieces of data:
-1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage.
-2.  **Performance Data:** This is a JSON object containing up to three data sets:
-    *   \`searchTermData\`: Aggregated data from the Sponsored Products Search Term Report.
-    *   \`streamData\`: Aggregated real-time data from the Amazon Marketing Stream.
-    *   \`salesTrafficData\`: Data from the Sales & Traffic report, which includes organic metrics.
+You will be provided with several pieces of data:
+1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage. This is for profitability calculations.
+2.  **Performance Data:** This is a JSON object containing up to three data sets. Understand their differences:
+
+    *   **Search Term Report Data:** This is HISTORICAL, AGGREGATED data from official reports. It has a **2-day reporting delay**. Use this for long-term trend analysis, identifying high-performing customer search terms, and finding irrelevant terms to negate.
+
+    *   **Stream Data:** This is NEAR REAL-TIME, AGGREGATED data. It is very recent and good for understanding performance for **"yesterday" or "today"**.
+
+    *   **Sales & Traffic Data:** This includes ORGANIC metrics. Use this to understand the overall health of the product, like total sessions and unit session percentage (conversion rate).
+
+**CRITICAL INSTRUCTION:** Do NOT simply add the metrics (spend, sales, clicks) from the Search Term Report and the Stream Data together. They represent different timeframes and data sources. Use them contextually. For example, if asked about "top search terms last month," use the Search Term Report. If asked about "performance yesterday," use the Stream Data.
 
 Your Task:
-1.  **Always start by acknowledging the data provided.** If some data is missing (e.g., no stream data), mention it.
-2.  Answer the user's initial question based on the provided data.
+1.  **Acknowledge the data provided.** Note the date ranges for each dataset. If some data is missing, mention it.
+2.  Answer the user's question based on the distinct data sources.
 3.  Present your analysis clearly, using formatting like lists and bold text.
-4.  If you suggest creating an automation rule, provide the JSON for it in a markdown code block.
-5.  Be ready to answer follow-up questions, remembering the context of the data you were initially given.`;
+4.  If you suggest an automation rule, provide the JSON for it in a markdown code block.
+5.  Remember the context of the data for follow-up questions.`;
 
 // --- Tool Endpoints (for Frontend to pre-load data) ---
 
@@ -33,6 +38,21 @@ router.post('/ai/tool/search-term', async (req, res) => {
         return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
     }
     try {
+        // INTELLIGENT DATE LOGIC:
+        // Search term reports have a ~2 day lag. We will fetch a 30-day window
+        // ending 2 days before the user's selected end date to provide historical context.
+        const userEndDate = new Date(endDate);
+        const reportEndDate = new Date(userEndDate);
+        reportEndDate.setDate(userEndDate.getDate() - 2);
+
+        const reportStartDate = new Date(reportEndDate);
+        reportStartDate.setDate(reportEndDate.getDate() - 29); // 30-day window
+
+        const reportStartDateStr = reportStartDate.toISOString().split('T')[0];
+        const reportEndDateStr = reportEndDate.toISOString().split('T')[0];
+        
+        console.log(`[AI Tool/SearchTerm] User range ${startDate}-${endDate}. Calculated historical range: ${reportStartDateStr}-${reportEndDateStr}`);
+
         const query = `
             WITH combined_reports AS (
                 -- Sponsored Products
@@ -84,8 +104,14 @@ router.post('/ai/tool/search-term', async (req, res) => {
             GROUP BY customer_search_term
             ORDER BY SUM(COALESCE(cost, 0)) DESC;
         `;
-        const { rows } = await pool.query(query, [asin, startDate, endDate]);
-        res.json(rows);
+        const { rows } = await pool.query(query, [asin, reportStartDateStr, reportEndDateStr]);
+        res.json({
+            data: rows,
+            dateRange: {
+                startDate: reportStartDateStr,
+                endDate: reportEndDateStr,
+            }
+        });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -97,15 +123,10 @@ router.post('/ai/tool/stream', async (req, res) => {
         return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
     }
     try {
-        // Step 1: Infer Campaign IDs from ASIN using a fixed historical lookback.
-        // This decouples campaign discovery from the user's selected date range for stream data,
-        // making it more robust against the 2-day lag in report data.
         const lookbackStartDate = new Date(endDate);
         lookbackStartDate.setDate(lookbackStartDate.getDate() - 29); // 30-day lookback
         const lookbackStartDateStr = lookbackStartDate.toISOString().split('T')[0];
         
-        console.log(`[AI Tool/Stream] Finding campaign IDs for ASIN ${asin} using report data from ${lookbackStartDateStr} to ${endDate}`);
-
         const campaignIdQuery = `
             SELECT DISTINCT campaign_id 
             FROM sponsored_products_search_term_report 
@@ -115,14 +136,9 @@ router.post('/ai/tool/stream', async (req, res) => {
         const campaignIds = campaignIdResult.rows.map(r => r.campaign_id);
 
         if (campaignIds.length === 0) {
-            console.log(`[AI Tool/Stream] No campaigns found for ASIN ${asin} in the last 30 days of report data. Returning empty stream data.`);
-            return res.json([]);
+            return res.json({ data: [], dateRange: { startDate, endDate } });
         }
         
-        console.log(`[AI Tool/Stream] Found ${campaignIds.length} associated campaign(s). Fetching stream data from ${startDate} to ${endDate}.`);
-
-        // Step 2: Fetch and aggregate stream data for those campaign IDs using the user's selected date range.
-        // The date range logic is made inclusive of the full end date.
         const streamQuery = `
             WITH traffic AS (
                 SELECT SUM((event_data->>'cost')::numeric) as spend, SUM((event_data->>'clicks')::bigint) as clicks
@@ -143,7 +159,7 @@ router.post('/ai/tool/stream', async (req, res) => {
             SELECT * FROM traffic, conversion;
         `;
         const { rows } = await pool.query(streamQuery, [campaignIds, startDate, endDate]);
-        res.json(rows);
+        res.json({ data: rows, dateRange: { startDate, endDate } });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -163,7 +179,7 @@ router.post('/ai/tool/sales-traffic', async (req, res) => {
             WHERE child_asin = $1 AND report_date BETWEEN $2 AND $3;
         `;
         const { rows } = await pool.query(query, [asin, startDate, endDate]);
-        res.json(rows);
+        res.json({ data: rows, dateRange: { startDate, endDate } });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -198,11 +214,9 @@ router.post('/ai/chat', async (req, res) => {
         });
         
         let currentMessage;
-        // If it's the start of a new conversation, build the detailed context prompt.
-        // Otherwise, just use the user's follow-up question.
         if (history.length === 0) {
             currentMessage = `
-Here is the data context for my question. Please analyze it before answering.
+Here is the data context for my question. Please analyze it before answering, paying close attention to the different date ranges for each data source.
 
 **Product Information:**
 - ASIN: ${context.productInfo.asin || 'Not provided'}
@@ -212,9 +226,9 @@ Here is the data context for my question. Please analyze it before answering.
 - Referral Fee: ${context.productInfo.referralFeePercent || '15'}%
 
 **Performance Data:**
-- Search Term Data: ${JSON.stringify(context.performanceData.searchTermData, null, 2) || 'Not provided'}
-- Stream Data: ${JSON.stringify(context.performanceData.streamData, null, 2) || 'Not provided'}
-- Sales & Traffic Data: ${JSON.stringify(context.performanceData.salesTrafficData, null, 2) || 'Not provided'}
+- Search Term Data (Date Range: ${context.performanceData.searchTermData.dateRange?.startDate} to ${context.performanceData.searchTermData.dateRange?.endDate}): ${JSON.stringify(context.performanceData.searchTermData.data, null, 2) || 'Not provided'}
+- Stream Data (Date Range: ${context.performanceData.streamData.dateRange?.startDate} to ${context.performanceData.streamData.dateRange?.endDate}): ${JSON.stringify(context.performanceData.streamData.data, null, 2) || 'Not provided'}
+- Sales & Traffic Data (Date Range: ${context.performanceData.salesTrafficData.dateRange?.startDate} to ${context.performanceData.salesTrafficData.dateRange?.endDate}): ${JSON.stringify(context.performanceData.salesTrafficData.data, null, 2) || 'Not provided'}
 
 **My Initial Question:**
 ${question}
@@ -232,7 +246,6 @@ ${question}
             if (chunkText) {
                 fullResponseText += chunkText;
                 if (firstChunk) {
-                    // Send conversationId with the first chunk
                     res.write(JSON.stringify({ conversationId, content: chunkText }) + '\n');
                     firstChunk = false;
                 } else {
@@ -241,7 +254,6 @@ ${question}
             }
         }
         
-        // Update history after the full response is generated
         const newHistory = [
             ...history,
             { role: 'user', parts: [{ text: currentMessage }] },

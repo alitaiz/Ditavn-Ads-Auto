@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useContext } from 'react';
 import { marked } from 'marked';
 import { DataCacheContext } from '../contexts/DataCacheContext';
-import { ChatMessage, AICopilotCache } from '../types';
+import { ChatMessage, AICopilotCache, LoadedDataInfo } from '../types';
 
 const styles: { [key: string]: React.CSSProperties } = {
     container: { display: 'grid', gridTemplateColumns: '40% 60%', gap: '20px', height: 'calc(100vh - 100px)', padding: '20px' },
@@ -47,19 +47,6 @@ export function AICopilotView() {
         updateAiCache(prev => ({ ...prev, dateRange: { ...prev.dateRange, [key]: value } }));
     };
 
-    const setLoadedData = (key: keyof AICopilotCache['loadedData'], data: any[] | null) => {
-        updateAiCache(prev => ({
-            ...prev,
-            loadedData: {
-                ...prev.loadedData,
-                [key]: {
-                    data: data,
-                    dateRange: prev.dateRange
-                }
-            }
-        }));
-    };
-
     const [loading, setLoading] = useState({ st: false, stream: false, sat: false, chat: false });
     const [error, setError] = useState({ st: '', stream: '', sat: '', chat: '' });
     const [currentQuestion, setCurrentQuestion] = useState('');
@@ -75,20 +62,20 @@ export function AICopilotView() {
         setError(prev => ({ ...prev, [tool]: '' }));
         
         let endpoint = '';
-        let setDataFunc: (data: any[] | null) => void;
+        let dataKey: keyof AICopilotCache['loadedData'];
 
         switch (tool) {
             case 'st': 
                 endpoint = '/api/ai/tool/search-term';
-                setDataFunc = (data) => setLoadedData('searchTermData', data);
+                dataKey = 'searchTermData';
                 break;
             case 'stream':
                 endpoint = '/api/ai/tool/stream';
-                setDataFunc = (data) => setLoadedData('streamData', data);
+                dataKey = 'streamData';
                 break;
             case 'sat':
                 endpoint = '/api/ai/tool/sales-traffic';
-                setDataFunc = (data) => setLoadedData('salesTrafficData', data);
+                dataKey = 'salesTrafficData';
                 break;
         }
 
@@ -102,9 +89,21 @@ export function AICopilotView() {
                     endDate: aiCache.dateRange.endDate 
                 }),
             });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Failed to load data.');
-            setDataFunc(data);
+            const responseData = await response.json();
+            if (!response.ok) throw new Error(responseData.error || 'Failed to load data.');
+            
+            // Update cache with data and the specific date range from the API response
+            updateAiCache(prev => ({
+                ...prev,
+                loadedData: {
+                    ...prev.loadedData,
+                    [dataKey]: {
+                        data: responseData.data,
+                        dateRange: responseData.dateRange,
+                    }
+                }
+            }));
+
         } catch (err) {
             setError(prev => ({ ...prev, [tool]: err instanceof Error ? err.message : 'An unknown error occurred' }));
         } finally {
@@ -149,11 +148,8 @@ export function AICopilotView() {
                 conversationId: aiCache.chat.conversationId,
                 context: {
                     productInfo: aiCache.productInfo,
-                    performanceData: {
-                        searchTermData: aiCache.loadedData.searchTermData.data,
-                        streamData: aiCache.loadedData.streamData.data,
-                        salesTrafficData: aiCache.loadedData.salesTrafficData.data,
-                    }
+                    // Pass the full loadedData object, which now includes the correct date ranges for each source
+                    performanceData: aiCache.loadedData,
                 }
             };
 
@@ -247,7 +243,7 @@ export function AICopilotView() {
                         <h3 style={styles.toolTitle}>Load Performance Data</h3>
                     </div>
                     <div style={styles.formGroup}>
-                        <label style={styles.label}>Date Range</label>
+                        <label style={styles.label}>Date Range (for Stream & Sales Data)</label>
                         <div style={styles.dateInputContainer}>
                             <input type="date" style={styles.input} value={aiCache.dateRange.startDate} onChange={e => setDateRange('startDate', e.target.value)} />
                             <input type="date" style={styles.input} value={aiCache.dateRange.endDate} onChange={e => setDateRange('endDate', e.target.value)} />
@@ -265,7 +261,7 @@ export function AICopilotView() {
                     {aiCache.chat.messages.length === 0 && <p style={{textAlign: 'center', color: '#888'}}>Load data and ask a question to start your conversation.</p>}
                     {aiCache.chat.messages.map(msg => (
                         <div key={msg.id} style={{...styles.message, ...(msg.sender === 'user' ? styles.userMessage : styles.aiMessage), display: 'flex', flexDirection: 'column'}}>
-                             <div dangerouslySetInnerHTML={{ __html: marked(msg.text) }}></div>
+                             <div dangerouslySetInnerHTML={{ __html: marked.parse(msg.text) }}></div>
                         </div>
                     ))}
                     {loading.chat && aiCache.chat.messages.length > 0 && aiCache.chat.messages[aiCache.chat.messages.length - 1].sender === 'user' && (
@@ -282,7 +278,7 @@ export function AICopilotView() {
     );
 }
 
-const ToolButton = ({ tool, onRun, onView, loading, dataInfo, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, onView: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, dataInfo: AICopilotCache['loadedData']['searchTermData'], error: string, name: string }) => {
+const ToolButton = ({ tool, onRun, onView, loading, dataInfo, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, onView: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, dataInfo: LoadedDataInfo, error: string, name: string }) => {
     
     const formatDate = (dateStr: string) => {
         // Add 'T00:00:00Z' to treat the date as UTC, avoiding timezone shifts from local interpretation.
