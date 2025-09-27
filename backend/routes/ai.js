@@ -81,27 +81,20 @@ const databaseTool = new DynamicTool({
                 total_orders: (BigInt(historyData.total_orders || 0) + BigInt(streamData.total_orders || 0)).toString(),
             };
 
-            const { total_impressions, total_clicks, total_spend, total_sales, total_orders } = combined;
+            const { total_impressions, total_spend } = combined;
 
             if (parseInt(total_impressions) === 0 && parseFloat(total_spend) === 0) {
-                 return `No advertising performance data found for ASIN ${asin} in the specified date range.`;
+                 return JSON.stringify({
+                    summary: `No advertising performance data found for ASIN ${asin} in the specified date range.`,
+                    data: { total_impressions: "0", total_clicks: "0", total_spend: "0.00", total_sales: "0.00", total_orders: "0" }
+                });
             }
 
-            const spend = parseFloat(total_spend);
-            const sales = parseFloat(total_sales);
-            const clicks = parseInt(total_clicks);
-            const orders = parseInt(total_orders);
-
-            const acos = sales > 0 ? (spend / sales) * 100 : 0;
-            const roas = spend > 0 ? sales / spend : 0;
-            const cvr = clicks > 0 ? (orders / clicks) * 100 : 0;
-            const cpc = clicks > 0 ? spend / clicks : 0;
-            
             const summary = `
                 Advertising Performance Summary for ASIN ${asin} from ${startDate} to ${endDate}:
-                - Ad Spend: $${spend.toFixed(2)}
-                - PPC Sales: $${sales.toFixed(2)}
-                - PPC Orders: ${total_orders}
+                - Ad Spend: $${parseFloat(combined.total_spend).toFixed(2)}
+                - PPC Sales: $${parseFloat(combined.total_sales).toFixed(2)}
+                - PPC Orders: ${combined.total_orders}
             `;
             return JSON.stringify({ summary, data: combined });
         } catch (e) {
@@ -133,22 +126,19 @@ const salesAndTrafficTool = new DynamicTool({
             const data = result.rows[0];
 
             if (!data || data.total_sessions === null) {
-                return `No total sales and traffic data found for ASIN ${asin} in the date range.`;
+                return JSON.stringify({
+                    summary: `No total sales and traffic data found for ASIN ${asin} in the date range.`,
+                    data: { total_sales: 0, total_units: 0, total_sessions: 0 }
+                });
             }
 
             const totalSales = parseFloat(data.total_ordered_product_sales || 0);
-            const totalUnits = parseInt(data.total_units_ordered || 0);
-            const totalSessions = parseInt(data.total_sessions || 0);
-            const totalCvr = totalSessions > 0 ? (totalUnits / totalSessions) * 100 : 0;
-
             const summary = `
                 Total Business Summary for ASIN ${asin} from ${startDate} to ${endDate}:
-                - Total Units Ordered: ${totalUnits}
+                - Total Units Ordered: ${parseInt(data.total_units_ordered || 0)}
                 - Total Ordered Product Sales: $${totalSales.toFixed(2)}
-                - Total Sessions: ${totalSessions}
-                - Overall Conversion Rate: ${totalCvr.toFixed(2)}%
             `;
-            return JSON.stringify({ summary, data: { total_sales: totalSales, total_units: totalUnits, total_sessions: totalSessions } });
+            return JSON.stringify({ summary, data: { total_sales: totalSales, total_units: parseInt(data.total_units_ordered || 0), total_sessions: parseInt(data.total_sessions || 0) } });
         } catch (e) {
             return `Database query failed for total sales and traffic: ${e.message}.`;
         } finally {
@@ -162,7 +152,6 @@ const profitCalculatorTool = new DynamicTool({
     name: "calculate_profit_metrics",
     description: "Calculates profit, profit margin, and break-even ACoS based on product pricing and costs. Essential for setting profitability targets.",
     func: async ({ salePrice, productCost, fbaFee, referralFeePercent }) => {
-        // Robust validation
         if (typeof salePrice !== 'number' || isNaN(salePrice) ||
             typeof productCost !== 'number' || isNaN(productCost) ||
             typeof fbaFee !== 'number' || isNaN(fbaFee) ||
@@ -208,6 +197,7 @@ const llm = new ChatGoogleGenerativeAI({
 });
 
 const agent = createReactAgent({ llm, tools });
+const agentConfig = { recursionLimit: 50 };
 
 // --- Route Handlers ---
 
@@ -277,21 +267,20 @@ router.post('/ai/suggest-rule', async (req, res) => {
         const { asin, salePrice, productCost, fbaFee, referralFeePercent } = productData;
         initialPrompt = `
             Analyze the performance of ASIN ${asin} from ${dateRange.start} to ${dateRange.end} and suggest a new "${ruleType}" automation rule.
-            Here is the product's cost structure:
-            - Sale Price: $${salePrice}
-            - Product Cost: $${productCost}
-            - FBA Fee: $${fbaFee}
-            - Referral Fee: ${referralFeePercent}%
+
+            Here is the required input data:
+            - product_cost_structure: { salePrice: ${salePrice}, productCost: ${productCost}, fbaFee: ${fbaFee}, referralFeePercent: ${referralFeePercent} }
+            - asin: "${asin}"
+            - date_range: { start: "${dateRange.start}", end: "${dateRange.end}" }
 
             My goal is to optimize for profitability.
             
             Follow these steps:
-            1. Calculate the product's profit metrics, including the break-even ACoS.
-            2. Get the product's historical advertising performance data from the database.
-            3. (If necessary) Get the product's total sales and traffic data to understand the bigger picture.
-            4. Based on all available data, analyze the situation.
-            5. Formulate a single, specific, and actionable automation rule of the type "${ruleType}". The rule should include a name, conditions, and actions.
-            6. Provide a clear reasoning for why you are suggesting this specific rule.
+            1. Use the 'calculate_profit_metrics' tool with the provided product_cost_structure to find the profit margin and break-even ACoS.
+            2. Use the 'get_product_performance' tool with the provided asin and date_range to get the historical advertising performance data.
+            3. Analyze all the data you have gathered.
+            4. Formulate a single, specific, and actionable automation rule of the type "${ruleType}". The rule must include a name, conditions, and actions.
+            5. Provide a clear reasoning for why you are suggesting this specific rule.
             
             Your final answer must be a JSON object containing two keys: "rule" (the rule object) and "reasoning" (your explanation). Do not add any other text outside this JSON object in your final answer.
         `;
@@ -301,25 +290,23 @@ router.post('/ai/suggest-rule', async (req, res) => {
     conversations.get(conversationId).push(...messages);
 
     try {
-        const stream = await agent.stream({ messages });
+        const stream = await agent.stream({ messages }, agentConfig);
         for await (const chunk of stream) {
             if (chunk.tool) {
                 res.write(`data: ${JSON.stringify({ type: 'thought', content: chunk.tool.log })}\n\n`);
             }
         }
 
-        const finalState = await agent.invoke({ messages });
+        const finalState = await agent.invoke({ messages }, agentConfig);
         if (finalState.messages && finalState.messages.length > 0) {
             const finalMessage = finalState.messages[finalState.messages.length - 1];
             conversations.get(conversationId).push(finalMessage);
             const content = finalMessage.content;
 
             try {
-                // The agent is instructed to return a JSON string.
                 const resultJson = JSON.parse(content);
                 res.write(`data: ${JSON.stringify({ type: 'rule', content: resultJson })}\n\n`);
             } catch (e) {
-                // If parsing fails, it's likely a final text answer.
                  res.write(`data: ${JSON.stringify({ type: 'agent', content: content })}\n\n`);
             }
         }
@@ -346,17 +333,16 @@ router.post('/ai/chat', async (req, res) => {
     const newMessages = [...history, new HumanMessage(message)];
     
     try {
-        const stream = await agent.stream({ messages: newMessages });
+        const stream = await agent.stream({ messages: newMessages }, agentConfig);
          for await (const chunk of stream) {
             if (chunk.tool) {
                 res.write(`data: ${JSON.stringify({ type: 'thought', content: chunk.tool.log })}\n\n`);
             }
         }
 
-        const finalState = await agent.invoke({ messages: newMessages });
+        const finalState = await agent.invoke({ messages: newMessages }, agentConfig);
          if (finalState.messages && finalState.messages.length > 0) {
             const finalMessage = finalState.messages[finalState.messages.length - 1];
-            // Update history with the full exchange
             conversations.set(conversationId, [...newMessages, finalMessage]);
 
             const content = finalMessage.content;
