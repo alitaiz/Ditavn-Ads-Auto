@@ -137,12 +137,13 @@ router.post('/ai/chat', async (req, res) => {
             conversationId = uuidv4();
         }
         
-        const model = ai.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            systemInstruction: getSystemInstruction()
+        const chat = ai.chats.create({
+            model: 'gemini-2.5-flash',
+            history: history,
+            config: {
+                systemInstruction: getSystemInstruction()
+            }
         });
-
-        const chat = model.startChat({ history });
         
         let currentMessage;
         // If it's the start of a new conversation, build the detailed context prompt.
@@ -170,25 +171,29 @@ ${question}
             currentMessage = question;
         }
 
-        const result = await chat.sendMessageStream(currentMessage);
+        const resultStream = await chat.sendMessageStream({ message: currentMessage });
 
+        let fullResponseText = '';
         let firstChunk = true;
-        for await (const chunk of result.stream) {
-            if (firstChunk) {
-                // Send conversationId with the first chunk
-                res.write(JSON.stringify({ conversationId, content: chunk.text() }) + '\n');
-                firstChunk = false;
-            } else {
-                res.write(JSON.stringify({ content: chunk.text() }) + '\n');
+        for await (const chunk of resultStream) {
+            const chunkText = chunk.text;
+            if (chunkText) {
+                fullResponseText += chunkText;
+                if (firstChunk) {
+                    // Send conversationId with the first chunk
+                    res.write(JSON.stringify({ conversationId, content: chunkText }) + '\n');
+                    firstChunk = false;
+                } else {
+                    res.write(JSON.stringify({ content: chunkText }) + '\n');
+                }
             }
         }
         
         // Update history after the full response is generated
-        const fullResponse = await result.response;
         const newHistory = [
             ...history,
             { role: 'user', parts: [{ text: currentMessage }] },
-            { role: 'model', parts: [{ text: fullResponse.text() }] }
+            { role: 'model', parts: [{ text: fullResponseText }] }
         ];
         conversations.set(conversationId, newHistory);
         
