@@ -162,6 +162,17 @@ const profitCalculatorTool = new DynamicTool({
     name: "calculate_profit_metrics",
     description: "Calculates profit, profit margin, and break-even ACoS based on product pricing and costs. Essential for setting profitability targets.",
     func: async ({ salePrice, productCost, fbaFee, referralFeePercent }) => {
+        // Robust validation
+        if (typeof salePrice !== 'number' || isNaN(salePrice) ||
+            typeof productCost !== 'number' || isNaN(productCost) ||
+            typeof fbaFee !== 'number' || isNaN(fbaFee) ||
+            typeof referralFeePercent !== 'number' || isNaN(referralFeePercent)) {
+            return "Error: Missing or invalid parameters. Please provide numeric values for salePrice, productCost, fbaFee, and referralFeePercent.";
+        }
+        if (salePrice <= 0) {
+            return "Error: salePrice must be a positive number.";
+        }
+
         const referralFee = salePrice * (referralFeePercent / 100);
         const totalCost = productCost + fbaFee + referralFee;
         const profit = salePrice - totalCost;
@@ -306,7 +317,7 @@ router.post('/ai/suggest-rule', async (req, res) => {
             try {
                 // The agent is instructed to return a JSON string.
                 const resultJson = JSON.parse(content);
-                res.write(`data: ${JSON.stringify({ type: 'result', content: resultJson })}\n\n`);
+                res.write(`data: ${JSON.stringify({ type: 'rule', content: resultJson })}\n\n`);
             } catch (e) {
                 // If parsing fails, it's likely a final text answer.
                  res.write(`data: ${JSON.stringify({ type: 'agent', content: content })}\n\n`);
@@ -351,7 +362,7 @@ router.post('/ai/chat', async (req, res) => {
             const content = finalMessage.content;
             try {
                 const resultJson = JSON.parse(content);
-                res.write(`data: ${JSON.stringify({ type: 'result', content: resultJson })}\n\n`);
+                res.write(`data: ${JSON.stringify({ type: 'rule', content: resultJson })}\n\n`);
             } catch (e) {
                  res.write(`data: ${JSON.stringify({ type: 'agent', content: content })}\n\n`);
             }
