@@ -118,8 +118,96 @@ export function AIRuleSuggester() {
 
         try {
             const response = await fetch('/api/ai/suggest-rule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            if (!response.ok || !response.body) throw new Error('Failed to start suggestion stream.');
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ message: 'An unknown error occurred.' }));
+                throw new Error(errorData.message || 'Failed to start suggestion.');
+            }
 
+            if (isNewProduct) {
+                // Handle non-streaming JSON response for new products
+                const result = await response.json();
+                if (result.type === 'playbook' && result.content) {
+                    const playbook = result.content;
+                    const playbookContent = `
+### Launch Plan: ${playbook.playbook_title}
+
+#### Phase 1: Discovery & Data Harvesting (First 2 Weeks)
+*   **Campaigns:** ${playbook.phase_1_campaigns.join(', ')}
+*   **Keywords:** ${playbook.phase_1_keywords.join(', ')}
+*   **Initial Bid:** ${playbook.initial_bid}
+*   **Initial Automation Rule:** ${playbook.initial_automation_rule_name}
+    *   *Goal:* ${playbook.initial_automation_rule_goal}
+
+#### Phase 2: Profitability Optimization (Ongoing)
+*   **Strategy:** ${playbook.phase_2_strategy}
+                    `.trim().replace(/^ +/gm, '');
+                    appendToHistory('agent', playbookContent);
+                } else {
+                    throw new Error("Received an unexpected response for the new product plan.");
+                }
+            } else {
+                // Handle streaming response for existing products
+                if (!response.body) throw new Error('Response body is missing for streaming.');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    
+                    for (let i = 0; i < parts.length - 1; i++) {
+                        const part = parts[i];
+                        if (part.startsWith('data: ')) {
+                            try {
+                                const jsonData = JSON.parse(part.substring(6));
+                                if (jsonData.type === 'conversationStart') {
+                                    setConversationId(jsonData.content.conversationId);
+                                } else if (jsonData.type === 'agent') {
+                                    appendToHistory('agent', jsonData.content);
+                                } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
+                                    appendToTrace(jsonData.type, jsonData.content);
+                                } else if (jsonData.type === 'result') {
+                                    appendToHistory('rule', jsonData.content);
+                                } else if (jsonData.type === 'error') {
+                                    throw new Error(jsonData.content);
+                                }
+                            } catch(e) { console.error("Stream parse error:", e); }
+                        }
+                    }
+                    buffer = parts[parts.length - 1];
+                }
+            }
+        } catch (err) {
+            appendToHistory('error', err instanceof Error ? err.message : 'An unknown error occurred.');
+        } finally {
+            setLoading(false);
+        }
+    }, [isNewProduct, newProductInputs, existingProductInputs, dateRange]);
+
+    const handleSendMessage = useCallback(async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!chatInput.trim() || !conversationId || loading) return;
+
+        appendToHistory('user', chatInput);
+        const messageToSend = chatInput;
+        setChatInput('');
+        setLoading(true);
+        
+        try {
+            const response = await fetch('/api/ai/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conversationId, message: messageToSend }),
+            });
+
+            if (!response.ok || !response.body) {
+                const errorData = await response.json().catch(() => ({ message: 'Failed to send message.' }));
+                throw new Error(errorData.message || 'An unknown error occurred.');
+            }
+            
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
@@ -135,8 +223,8 @@ export function AIRuleSuggester() {
                     if (part.startsWith('data: ')) {
                         try {
                             const jsonData = JSON.parse(part.substring(6));
-                            if (jsonData.type === 'conversationStart') {
-                                setConversationId(jsonData.content.conversationId);
+                            if (jsonData.type === 'agent') {
+                                appendToHistory('agent', jsonData.content);
                             } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
                                 appendToTrace(jsonData.type, jsonData.content);
                             } else if (jsonData.type === 'result') {
@@ -144,56 +232,17 @@ export function AIRuleSuggester() {
                             } else if (jsonData.type === 'error') {
                                 throw new Error(jsonData.content);
                             }
-                        } catch(e) { console.error("Stream parse error:", e); }
+                        } catch(e) { console.error("Chat stream parse error:", e); }
                     }
                 }
                 buffer = parts[parts.length - 1];
-            }
-        } catch (err) {
-            appendToHistory('error', err instanceof Error ? err.message : 'An unknown error occurred.');
-        } finally {
-            setLoading(false);
-        }
-    }, [isNewProduct, newProductInputs, existingProductInputs, dateRange]);
-
-    const handleSendMessage = useCallback(async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!chatInput.trim() || !conversationId || loading) return;
-
-        appendToHistory('user', chatInput);
-        setChatInput('');
-        setLoading(true);
-        
-        try {
-            const response = await fetch('/api/ai/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ conversationId, message: chatInput }),
-            });
-            if (!response.ok || !response.body) throw new Error('Failed to send message.');
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let agentResponse = '';
-            
-            appendToHistory('agent', '...'); // Placeholder for streaming
-            
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                agentResponse += decoder.decode(value, { stream: true });
-                setChatHistory(prev => {
-                    const newHistory = [...prev];
-                    newHistory[newHistory.length - 1].content = agentResponse;
-                    return newHistory;
-                });
             }
         } catch (err) {
             appendToHistory('error', err instanceof Error ? err.message : 'Failed to get a response.');
         } finally {
             setLoading(false);
         }
-    }, [chatInput, conversationId, loading]);
+    }, [conversationId, loading]);
 
     const renderMessageContent = (message: ChatMessage) => {
         switch (message.type) {
