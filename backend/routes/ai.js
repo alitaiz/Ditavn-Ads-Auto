@@ -1,7 +1,7 @@
 // backend/routes/ai.js
 import express from 'express';
 import pool from '../db.js';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 import { agentApp } from '../services/langchain/agent.js';
 import { HumanMessage } from "@langchain/core/messages";
 import crypto from 'crypto';
@@ -65,75 +65,212 @@ router.post('/ai/chat', async (req, res) => {
 });
 
 
+const tryParseJson = (value) => {
+    if (!value || typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const jsonRegex = /```(?:json)?\s*([\s\S]*?)\s*```/i;
+    const match = trimmed.match(jsonRegex);
+    const candidate = match && match[1] ? match[1] : trimmed;
+    try {
+        return JSON.parse(candidate);
+    } catch (e) {
+        return null;
+    }
+};
+
+const extractTextFromContent = (content) => {
+    if (!content) return '';
+    if (typeof content === 'string') return content;
+
+    if (Array.isArray(content)) {
+        return content
+            .map(part => {
+                if (!part) return '';
+                if (typeof part === 'string') return part;
+                if (typeof part.text === 'string') return part.text;
+                if (typeof part.response === 'string') return part.response;
+                if (typeof part.output_text === 'string') return part.output_text;
+                if (typeof part.content === 'string') return part.content;
+                return '';
+            })
+            .filter(Boolean)
+            .join('\n');
+    }
+
+    if (typeof content === 'object') {
+        if (typeof content.text === 'string') return content.text;
+        if (typeof content.response === 'string') return content.response;
+        if (typeof content.output_text === 'string') return content.output_text;
+        if (typeof content.content === 'string') return content.content;
+    }
+
+    return '';
+};
+
+const toNumber = (value) => {
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string' && value.trim()) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+};
+
+const formatMetric = (value, options = {}) => {
+    const numberValue = toNumber(value);
+    if (numberValue === null) return null;
+
+    const { style = 'decimal', unit = '' } = options;
+    if (style === 'percent') {
+        return `${numberValue.toFixed(2)}%`;
+    }
+
+    let formatted;
+    try {
+        formatted = numberValue.toLocaleString('vi-VN', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+    } catch (_) {
+        formatted = numberValue.toFixed(2);
+    }
+
+    if (style === 'currency') {
+        return `${formatted} ${unit || 'USD'}`;
+    }
+
+    return formatted;
+};
+
+const describeStructuredObservation = (toolName, parsed) => {
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    if (toolName === 'ProductFinancialsCalculator') {
+        const profit = formatMetric(parsed.profitPerUnit, { style: 'currency' });
+        const breakEvenAcos = formatMetric(parsed.breakEvenAcos, { style: 'percent' });
+        if (profit || breakEvenAcos) {
+            return [
+                'Tool ProductFinancialsCalculator trả về các chỉ số tài chính:',
+                profit ? `• Lợi nhuận mỗi đơn vị ước tính: ${profit}` : null,
+                breakEvenAcos ? `• ACOS hòa vốn: ${breakEvenAcos}` : null,
+            ].filter(Boolean).join('\n');
+        }
+    }
+
+    if (toolName === 'Get_PPC_Performance_Summary') {
+        const spendNumber = toNumber(parsed.total_spend);
+        const salesNumber = toNumber(parsed.total_sales);
+        const spend = formatMetric(spendNumber, { style: 'currency' });
+        const sales = formatMetric(salesNumber, { style: 'currency' });
+        const clicks = formatMetric(parsed.total_clicks);
+        const orders = formatMetric(parsed.total_orders);
+        const acos = spendNumber !== null && salesNumber !== null && salesNumber > 0
+            ? formatMetric((spendNumber / salesNumber) * 100, { style: 'percent' })
+            : null;
+
+        const lines = [
+            'Tool Get_PPC_Performance_Summary tổng hợp dữ liệu hiệu suất:',
+            spend ? `• Tổng chi tiêu: ${spend}` : null,
+            sales ? `• Tổng doanh thu: ${sales}` : null,
+            clicks ? `• Tổng số lượt click: ${clicks}` : null,
+            orders ? `• Tổng số đơn hàng: ${orders}` : null,
+            acos ? `• ACoS thực tế: ${acos}` : null,
+        ].filter(Boolean);
+
+        if (lines.length) {
+            return lines.join('\n');
+        }
+    }
+
+    return null;
+};
+
+const formatToolObservation = (toolName, content) => {
+    const text = extractTextFromContent(content) || (typeof content === 'string' ? content : '');
+    const parsed = tryParseJson(text);
+
+    const structuredDescription = describeStructuredObservation(toolName, parsed);
+    if (structuredDescription) {
+        return structuredDescription;
+    }
+
+    if (parsed && typeof parsed === 'object') {
+        const pretty = JSON.stringify(parsed, null, 2);
+        return `Tool ${toolName} trả về dữ liệu:\n${pretty}`;
+    }
+
+    const cleaned = text || (typeof content === 'object' ? JSON.stringify(content) : '');
+    if (!cleaned) return '';
+    return `Tool ${toolName} phản hồi: ${cleaned}`;
+};
+
+const formatToolCall = (toolCall) => {
+    const args = toolCall?.args ?? {};
+    let formattedArgs = '';
+    try {
+        formattedArgs = JSON.stringify(args, null, 2);
+    } catch (_) {
+        formattedArgs = JSON.stringify(args);
+    }
+
+    if (!formattedArgs || formattedArgs === '{}') {
+        return `Đang gọi tool ${toolCall.name} để thu thập dữ liệu cần thiết.`;
+    }
+
+    return `Đang gọi tool ${toolCall.name} với tham số:\n${formattedArgs}`;
+};
+
+const sendSse = (res, payload) => {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    if (typeof res.flush === 'function') {
+        try { res.flush(); } catch (_) { /* ignore */ }
+    }
+};
+
 const streamAndRecordConversation = async (res, conversationId, messages, isNewConversation = true) => {
     let finalMessages = [...messages];
-    
+
     if (isNewConversation) {
-        res.write(`data: ${JSON.stringify({ type: 'conversationStart', content: { conversationId } })}\n\n`);
+        sendSse(res, { type: 'conversationStart', content: { conversationId } });
     }
 
     const stream = await agentApp.stream({ messages });
 
     for await (const chunk of stream) {
         if (chunk.agent) {
-            (chunk.agent.messages || []).forEach(async msg => {
-                finalMessages.push(msg); // Add agent's own messages to history
-                
-                // --- EMIT THOUGHT & ACTION ---
+            (chunk.agent.messages || []).forEach(msg => {
+                finalMessages.push(msg);
+
+                const messageText = (extractTextFromContent(msg.content) || '').trim();
+
                 if (msg.tool_calls?.length) {
-                    if (typeof msg.content === 'string' && msg.content.trim()) {
-                         res.write(`data: ${JSON.stringify({ type: 'thought', content: msg.content.trim() })}\n\n`);
-                    }
+                    const toolNames = msg.tool_calls
+                        .map(toolCall => toolCall?.name)
+                        .filter(Boolean);
+                    const defaultThought = toolNames.length
+                        ? `Cần sử dụng ${toolNames.join(' và ')} để thu thập dữ liệu trước khi phân tích.`
+                        : 'Đang quyết định gọi các tool cần thiết để có đủ dữ liệu.';
+
+                    sendSse(res, { type: 'thought', content: messageText || defaultThought });
 
                     msg.tool_calls.forEach(toolCall => {
-                        let argsString;
-                        try {
-                            // Pretty-print the JSON arguments for better readability in the trace
-                            argsString = JSON.stringify(toolCall.args, null, 2);
-                        } catch (e) {
-                            // Fallback for non-JSON or malformed args
-                            argsString = JSON.stringify(toolCall.args);
-                        }
-                        const action = `${toolCall.name}${argsString}`;
-                        res.write(`data: ${JSON.stringify({ type: 'action', content: action })}\n\n`);
+                        sendSse(res, { type: 'action', content: formatToolCall(toolCall) });
                     });
+                } else {
+                    const maybeJson = tryParseJson(messageText);
 
-                } else if (msg.content && typeof msg.content === 'string') {
-                     try {
-                        // FIX: Use a robust regex to extract JSON from a string, even if it's wrapped in markdown.
-                        const jsonRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
-                        const match = msg.content.match(jsonRegex);
-                        let finalJson;
-
-                        if (match && match[1]) {
-                            // If a JSON block is found in markdown, parse its content.
-                            finalJson = JSON.parse(match[1]);
-                        } else {
-                            // Otherwise, assume the entire content is the JSON string.
-                            finalJson = JSON.parse(msg.content);
+                    if (maybeJson && typeof maybeJson === 'object' && (maybeJson.rule || maybeJson.reasoning)) {
+                        const reasoning = typeof maybeJson.reasoning === 'string'
+                            ? maybeJson.reasoning.trim()
+                            : '';
+                        if (reasoning) {
+                            sendSse(res, { type: 'agent', content: reasoning });
                         }
-                        
-                        // --- Generate Natural Language Summary ---
-                        try {
-                            const summaryPrompt = `Dựa trên đối tượng JSON sau đây chứa một đề xuất rule PPC và lý do, hãy viết một bản tóm tắt bằng ngôn ngữ tự nhiên, thân thiện cho người dùng. Giải thích ngắn gọn rule đó làm gì và tại sao nó được đề xuất. JSON:\n\n${JSON.stringify(finalJson, null, 2)}`;
-                            const summaryResponse = await ai.models.generateContent({
-                                model: 'gemini-2.5-flash',
-                                contents: summaryPrompt,
-                            });
-                            // Stream the natural language summary first
-                            res.write(`data: ${JSON.stringify({ type: 'agent', content: summaryResponse.text })}\n\n`);
-                        } catch(summaryError) {
-                             console.error("Failed to generate summary:", summaryError);
-                             // If summary fails, still send the main result
-                        }
-                        // --- END ---
-
-                        // Always stream the structured JSON result
-                        res.write(`data: ${JSON.stringify({ type: 'result', content: finalJson })}\n\n`);
-
-                    } catch (e) {
-                         // This is a text response to a follow-up question.
-                         res.write(`data: ${JSON.stringify({ type: 'agent', content: msg.content })}\n\n`);
+                        sendSse(res, { type: 'result', content: maybeJson });
+                    } else {
+                        const fallback = messageText || 'Đã hoàn tất suy luận và chuẩn bị trả lời.';
+                        sendSse(res, { type: 'agent', content: fallback });
                     }
                 }
             });
@@ -144,11 +281,15 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
             messagesArray.forEach(msg => {
                 finalMessages.push(msg);
-                res.write(`data: ${JSON.stringify({ type: 'observation', content: msg.content })}\n\n`);
+                const toolName = msg?.name || msg?.tool_call_id || 'không rõ';
+                const formatted = formatToolObservation(toolName, msg.content);
+                if (formatted) {
+                    sendSse(res, { type: 'observation', content: formatted });
+                }
             });
         }
     }
-    
+
     conversations.set(conversationId, finalMessages);
     res.end();
 };
