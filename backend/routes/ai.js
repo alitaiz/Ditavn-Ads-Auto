@@ -83,20 +83,21 @@ const extractTextFromContent = (content) => {
     if (!content) return '';
     if (typeof content === 'string') return content;
 
+
+
     if (Array.isArray(content)) {
         return content
             .map(part => {
                 if (!part) return '';
                 if (typeof part === 'string') return part;
                 if (typeof part.text === 'string') return part.text;
-                if (typeof part.response === 'string') return part.response;
-                if (typeof part.output_text === 'string') return part.output_text;
-                if (typeof part.content === 'string') return part.content;
+
                 return '';
             })
             .filter(Boolean)
             .join('\n');
     }
+
 
     if (typeof content === 'object') {
         if (typeof content.text === 'string') return content.text;
@@ -219,6 +220,7 @@ const formatToolCall = (toolCall) => {
     }
 
     return `Đang gọi tool ${toolCall.name} với tham số:\n${formattedArgs}`;
+
 };
 
 const sendSse = (res, payload) => {
@@ -242,6 +244,7 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
             (chunk.agent.messages || []).forEach(msg => {
                 finalMessages.push(msg);
 
+
                 const messageText = (extractTextFromContent(msg.content) || '').trim();
 
                 if (msg.tool_calls?.length) {
@@ -256,11 +259,13 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
                     msg.tool_calls.forEach(toolCall => {
                         sendSse(res, { type: 'action', content: formatToolCall(toolCall) });
+
                     });
                 } else {
                     const maybeJson = tryParseJson(messageText);
 
                     if (maybeJson && typeof maybeJson === 'object' && (maybeJson.rule || maybeJson.reasoning)) {
+
                         const reasoning = typeof maybeJson.reasoning === 'string'
                             ? maybeJson.reasoning.trim()
                             : '';
@@ -271,6 +276,7 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
                     } else {
                         const fallback = messageText || 'Đã hoàn tất suy luận và chuẩn bị trả lời.';
                         sendSse(res, { type: 'agent', content: fallback });
+
                     }
                 }
             });
@@ -281,8 +287,10 @@ const streamAndRecordConversation = async (res, conversationId, messages, isNewC
 
             messagesArray.forEach(msg => {
                 finalMessages.push(msg);
+
                 const toolName = msg?.name || msg?.tool_call_id || 'không rõ';
                 const formatted = formatToolObservation(toolName, msg.content);
+
                 if (formatted) {
                     sendSse(res, { type: 'observation', content: formatted });
                 }
