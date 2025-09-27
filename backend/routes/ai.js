@@ -292,9 +292,6 @@ router.post('/ai/suggest-rule', async (req, res) => {
     try {
         const stream = await agent.stream({ messages });
         for await (const chunk of stream) {
-            if (chunk.agent) {
-                res.write(`data: ${JSON.stringify({ type: 'agent', content: chunk.agent.join('\n') })}\n\n`);
-            }
             if (chunk.tool) {
                 res.write(`data: ${JSON.stringify({ type: 'thought', content: chunk.tool.log })}\n\n`);
             }
@@ -340,9 +337,6 @@ router.post('/ai/chat', async (req, res) => {
     try {
         const stream = await agent.stream({ messages: newMessages });
          for await (const chunk of stream) {
-            if (chunk.agent) {
-                res.write(`data: ${JSON.stringify({ type: 'agent', content: chunk.agent.join('\n') })}\n\n`);
-            }
             if (chunk.tool) {
                 res.write(`data: ${JSON.stringify({ type: 'thought', content: chunk.tool.log })}\n\n`);
             }
