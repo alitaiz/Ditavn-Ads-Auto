@@ -38,20 +38,14 @@ router.post('/ai/tool/search-term', async (req, res) => {
         return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
     }
     try {
-        // INTELLIGENT DATE LOGIC:
-        // Search term reports have a ~2 day lag. We will fetch a 30-day window
-        // ending 2 days before the user's selected end date to provide historical context.
-        const userEndDate = new Date(endDate);
-        const reportEndDate = new Date(userEndDate);
-        reportEndDate.setDate(userEndDate.getDate() - 2);
-
-        const reportStartDate = new Date(reportEndDate);
-        reportStartDate.setDate(reportEndDate.getDate() - 29); // 30-day window
-
-        const reportStartDateStr = reportStartDate.toISOString().split('T')[0];
-        const reportEndDateStr = reportEndDate.toISOString().split('T')[0];
+        // UPDATED LOGIC: Use the date range provided by the user directly.
+        // The data source has a natural 2-day lag, which is explained to the AI
+        // in the system instruction. The query will simply return available data
+        // within the requested range.
+        const reportStartDateStr = startDate;
+        const reportEndDateStr = endDate;
         
-        console.log(`[AI Tool/SearchTerm] User range ${startDate}-${endDate}. Calculated historical range: ${reportStartDateStr}-${reportEndDateStr}`);
+        console.log(`[AI Tool/SearchTerm] Using user-provided date range directly: ${reportStartDateStr} to ${reportEndDateStr}`);
 
         const query = `
             WITH combined_reports AS (
