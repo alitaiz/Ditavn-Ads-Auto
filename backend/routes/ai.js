@@ -1,6 +1,6 @@
 // backend/routes/ai.js
 import express from 'express';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { DynamicTool } from "@langchain/core/tools";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
@@ -231,7 +231,7 @@ router.post('/ai/suggest-rule', async (req, res) => {
             
             Use the "create_ppc_launch_plan" tool to structure your final output.
         `;
-        const ai = new GoogleGenerativeAI({apiKey: process.env.GEMINI_API_KEY});
+        const ai = new GoogleGenAI({apiKey: process.env.GEMINI_API_KEY});
         try {
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
