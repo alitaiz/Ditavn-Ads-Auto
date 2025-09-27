@@ -1,129 +1,197 @@
+// backend/routes/ai.js
 import express from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
+import { v4 as uuidv4 } from 'uuid';
+import pool from '../db.js';
 
 const router = express.Router();
-
-// Fix: Initialize the GoogleGenAI client. Ensure API_KEY is set in your environment variables.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const ruleSuggestionSchema = {
-    type: Type.OBJECT,
-    properties: {
-        name: {
-            type: Type.STRING,
-            description: "A descriptive name for the automation rule."
-        },
-        conditionGroups: {
-            type: Type.ARRAY,
-            description: "An array of IF/THEN logic blocks. The first one that matches wins.",
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    conditions: {
-                        type: Type.ARRAY,
-                        description: "A list of conditions that must ALL be true (AND logic).",
-                        items: {
-                            type: Type.OBJECT,
-                            properties: {
-                                metric: {
-                                    type: Type.STRING,
-                                    description: "The performance metric to evaluate. Must be one of: 'spend', 'sales', 'acos', 'orders', 'clicks', 'impressions'."
-                                },
-                                timeWindow: {
-                                    type: Type.NUMBER,
-                                    description: "The lookback period in days (1-90)."
-                                },
-                                operator: {
-                                    type: Type.STRING,
-                                    description: "The comparison operator. Must be '>', '<', or '='."
-                                },
-                                value: {
-                                    type: Type.NUMBER,
-                                    description: "The threshold value to compare against. For ACOS, use a decimal (e.g., 0.4 for 40%)."
-                                }
-                            },
-                            required: ["metric", "timeWindow", "operator", "value"]
-                        }
-                    },
-                    action: {
-                        type: Type.OBJECT,
-                        description: "The action to take if all conditions are met.",
-                        properties: {
-                            type: {
-                                type: Type.STRING,
-                                description: "The type of action. Must be one of: 'adjustBidPercent', 'negateSearchTerm'."
-                            },
-                            value: {
-                                type: Type.NUMBER,
-                                description: "The value for the action. For 'adjustBidPercent', it's a percentage (e.g., -10 for -10%). Not used for 'negateSearchTerm'."
-                            },
-                            matchType: {
-                                type: Type.STRING,
-                                description: "For 'negateSearchTerm' action. Must be 'NEGATIVE_EXACT' or 'NEGATIVE_PHRASE'."
-                            },
-                            minBid: {
-                                type: Type.NUMBER,
-                                description: "Optional minimum bid for 'adjustBidPercent'."
-                            },
-                            maxBid: {
-                                type: Type.NUMBER,
-                                description: "Optional maximum bid for 'adjustBidPercent'."
-                            }
-                        },
-                        required: ["type"]
-                    }
-                },
-                required: ["conditions", "action"]
-            }
-        }
-    },
-    required: ["name", "conditionGroups"]
-};
+const conversations = new Map(); // In-memory store for conversation history
 
-router.post('/ai/suggest-rule', async (req, res) => {
-    const { goal, ruleType } = req.body;
-    if (!goal || !ruleType) {
-        return res.status(400).json({ error: 'Goal and ruleType are required.' });
+const getSystemInstruction = () => `You are an expert Amazon PPC Analyst named "Co-Pilot". Your goal is to help users analyze performance data and provide strategic advice.
+
+User will provide you with several pieces of data:
+1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage.
+2.  **Performance Data:** This is a JSON object containing up to three data sets:
+    *   `searchTermData`: Aggregated data from the Sponsored Products Search Term Report.
+    *   `streamData`: Aggregated real-time data from the Amazon Marketing Stream.
+    *   `salesTrafficData`: Data from the Sales & Traffic report, which includes organic metrics.
+
+Your Task:
+1.  **Always start by acknowledging the data provided.** If some data is missing (e.g., no stream data), mention it.
+2.  **Use your tools** to perform initial calculations on the provided data.
+3.  Answer the user's initial question based on your calculations and the data.
+4.  Present your analysis clearly, using formatting like lists and bold text.
+5.  If you suggest creating an automation rule, provide the JSON for it in a markdown code block.
+6.  Be ready to answer follow-up questions, remembering the context of the data you were initially given.`;
+
+// --- Tool Endpoints (for Frontend to pre-load data) ---
+
+router.post('/ai/tool/search-term', async (req, res) => {
+    const { asin, startDate, endDate } = req.body;
+    if (!asin || !startDate || !endDate) {
+        return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
     }
+    try {
+        const query = `
+            SELECT 
+                customer_search_term,
+                SUM(impressions) as impressions,
+                SUM(clicks) as clicks,
+                SUM(cost) as spend,
+                SUM(sales_7d) as sales,
+                SUM(purchases_7d) as orders
+            FROM sponsored_products_search_term_report
+            WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+            GROUP BY customer_search_term
+            ORDER BY SUM(cost) DESC;
+        `;
+        const { rows } = await pool.query(query, [asin, startDate, endDate]);
+        res.json(rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/ai/tool/stream', async (req, res) => {
+    const { asin, startDate, endDate } = req.body;
+    if (!asin || !startDate || !endDate) {
+        return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
+    }
+    try {
+        // Step 1: Infer Campaign IDs from ASIN in the search term report
+        const campaignIdQuery = `
+            SELECT DISTINCT campaign_id 
+            FROM sponsored_products_search_term_report 
+            WHERE asin = $1 AND report_date BETWEEN $2 AND $3;
+        `;
+        const campaignIdResult = await pool.query(campaignIdQuery, [asin, startDate, endDate]);
+        const campaignIds = campaignIdResult.rows.map(r => r.campaign_id);
+
+        if (campaignIds.length === 0) {
+            return res.json({ message: "No campaigns found for this ASIN in the selected date range. Cannot fetch stream data." });
+        }
+        
+        // Step 2: Fetch and aggregate stream data for those campaign IDs
+        const streamQuery = `
+            WITH traffic AS (
+                SELECT SUM((event_data->>'cost')::numeric) as spend, SUM((event_data->>'clicks')::bigint) as clicks
+                FROM raw_stream_events
+                WHERE event_type = 'sp-traffic'
+                AND (event_data->>'campaign_id')::bigint = ANY($1)
+                AND (event_data->>'time_window_start')::timestamptz BETWEEN $2 AND $3
+            ),
+            conversion AS (
+                SELECT SUM((event_data->>'attributed_sales_1d')::numeric) as sales, SUM((event_data->>'attributed_conversions_1d')::bigint) as orders
+                FROM raw_stream_events
+                WHERE event_type = 'sp-conversion'
+                AND (event_data->>'campaign_id')::bigint = ANY($1)
+                AND (event_data->>'time_window_start')::timestamptz BETWEEN $2 AND $3
+            )
+            SELECT * FROM traffic, conversion;
+        `;
+        const { rows } = await pool.query(streamQuery, [campaignIds, startDate, endDate]);
+        res.json(rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.post('/ai/tool/sales-traffic', async (req, res) => {
+    const { asin, startDate, endDate } = req.body;
+    if (!asin || !startDate || !endDate) {
+        return res.status(400).json({ error: 'ASIN, startDate, and endDate are required.' });
+    }
+    try {
+        const query = `
+            SELECT 
+                SUM((traffic_data->>'sessions')::int) as total_sessions,
+                SUM((sales_data->>'unitsOrdered')::int) as total_units_ordered
+            FROM sales_and_traffic_by_asin
+            WHERE child_asin = $1 AND report_date BETWEEN $2 AND $3;
+        `;
+        const { rows } = await pool.query(query, [asin, startDate, endDate]);
+        res.json(rows);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// --- Main Chat Endpoint ---
+
+router.post('/ai/chat', async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Transfer-Encoding', 'chunked');
 
     try {
-        const prompt = `
-            You are an expert Amazon PPC automation strategist. Your task is to generate a single, specific automation rule configuration based on a user's high-level goal.
-            The rule you create will be for Sponsored Products (SP) campaigns.
+        let { question, conversationId, context } = req.body;
+        
+        if (!question) {
+            throw new Error('Question is required.');
+        }
 
-            User's Goal: "${goal}"
-            Rule Type: "${ruleType}"
-
-            Instructions:
-            1.  Analyze the user's goal and the rule type.
-            2.  Create a JSON object that represents a logical rule to achieve this goal.
-            3.  The JSON object must strictly adhere to the provided schema.
-            4.  For 'timeWindow', choose a reasonable number of days (e.g., 7, 14, 30, 60).
-            5.  For 'metric', use one of: 'spend', 'sales', 'acos', 'orders', 'clicks', 'impressions'.
-            6.  For ACOS 'value', use a decimal representation (e.g., 0.4 for 40% ACOS).
-            7.  For 'action.type', use one of: 'adjustBidPercent', 'negateSearchTerm'.
-            8.  For 'adjustBidPercent', 'value' is a percentage (e.g., -15 for -15%). A negative value decreases the bid, a positive value increases it.
-            9.  For 'negateSearchTerm', 'matchType' must be 'NEGATIVE_EXACT' or 'NEGATIVE_PHRASE'.
-            10. Provide a concise, descriptive 'name' for the rule.
-            11. Be logical. For example, a rule to negate unprofitable search terms should look at high spend and zero sales. A rule to reduce ACOS should lower bids on high-ACOS keywords.
-        `;
-
-        const response = await ai.models.generateContent({
+        let history = [];
+        if (conversationId && conversations.has(conversationId)) {
+            history = conversations.get(conversationId);
+        } else {
+            conversationId = uuidv4();
+        }
+        
+        const model = ai.getGenerativeModel({
             model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: ruleSuggestionSchema,
-            },
+            systemInstruction: getSystemInstruction()
         });
 
-        const jsonText = response.text.trim();
-        const suggestion = JSON.parse(jsonText);
-        res.json(suggestion);
+        const chat = model.startChat({ history });
+
+        // Build a comprehensive prompt with all the context provided by the user
+        const contextPrompt = `
+Here is the data context for my question. Please analyze it before answering.
+
+**Product Information:**
+- ASIN: ${context.productInfo.asin || 'Not provided'}
+- Sale Price: $${context.productInfo.salePrice || 'Not provided'}
+- Product Cost: $${context.productInfo.cost || 'Not provided'}
+- FBA Fee: $${context.productInfo.fbaFee || 'Not provided'}
+- Referral Fee: ${context.productInfo.referralFeePercent || '15'}%
+
+**Performance Data:**
+- Search Term Data: ${JSON.stringify(context.performanceData.searchTermData, null, 2) || 'Not provided'}
+- Stream Data: ${JSON.stringify(context.performanceData.streamData, null, 2) || 'Not provided'}
+- Sales & Traffic Data: ${JSON.stringify(context.performanceData.salesTrafficData, null, 2) || 'Not provided'}
+
+**My Initial Question:**
+${question}
+`;
+
+        const result = await chat.sendMessageStream(contextPrompt);
+
+        let firstChunk = true;
+        for await (const chunk of result.stream) {
+            if (firstChunk) {
+                // Send conversationId with the first chunk
+                res.write(JSON.stringify({ conversationId, content: chunk.text() }) + '\n');
+                firstChunk = false;
+            } else {
+                res.write(JSON.stringify({ content: chunk.text() }) + '\n');
+            }
+        }
+        
+        // Update history after the full response is generated
+        const fullResponse = await result.response;
+        const newHistory = [
+            ...history,
+            { role: 'user', parts: [{ text: contextPrompt }] },
+            { role: 'model', parts: [{ text: fullResponse.text() }] }
+        ];
+        conversations.set(conversationId, newHistory);
+        
+        res.end();
 
     } catch (error) {
-        console.error("Gemini API error:", error);
-        res.status(500).json({ error: "Failed to get suggestion from AI." });
+        console.error("AI chat error:", error);
+        res.status(500).end(JSON.stringify({ error: error.message }));
     }
 });
 

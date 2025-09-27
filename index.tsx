@@ -10,6 +10,7 @@ import { SalesAndTrafficView } from './views/SalesAndTrafficView';
 import { SPSearchTermsView } from './views/SPSearchTermsView';
 import { DatabaseView } from './views/DatabaseView';
 import { AutomationView } from './views/AutomationView';
+import { AICopilotView } from './views/AICopilotView'; // Import the new view
 import { DataCacheProvider } from './contexts/DataCacheContext';
 
 // Basic global styles
@@ -65,6 +66,7 @@ function App() {
           <Route path="sales-and-traffic" element={<SalesAndTrafficView />} />
           <Route path="database" element={<DatabaseView />} />
           <Route path="automation" element={<AutomationView />} />
+          <Route path="ai-copilot" element={<AICopilotView />} /> {/* Add new route */}
           <Route path="*" element={<Navigate to="/campaigns" replace />} />
         </Route>
       </Routes>
