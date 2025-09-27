@@ -8,7 +8,7 @@ interface TraceStep {
     content: string;
 }
 interface ChatMessage {
-    type: 'user' | 'agent' | 'agent_trace' | 'rule' | 'error';
+    type: 'user' | 'agent' | 'agent_trace' | 'rule' | 'error' | 'playbook';
     content: any; // string for user/agent, TraceStep[] for agent_trace, etc.
     id: number;
 }
@@ -17,6 +17,15 @@ interface SuggestedRule {
     rule_type: string;
     ad_type?: string;
     config: any;
+}
+interface Playbook {
+    playbook_title: string;
+    phase_1_campaigns: string[];
+    phase_1_keywords: string[];
+    initial_bid: string;
+    initial_automation_rule_name: string;
+    initial_automation_rule_goal: string;
+    phase_2_strategy: string;
 }
 
 // --- Styles ---
@@ -55,7 +64,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     agentTrace: { backgroundColor: '#f0f2f2', color: '#444', borderRadius: '8px', padding: '15px', fontFamily: 'monospace', fontSize: '0.85rem', whiteSpace: 'pre-wrap', lineHeight: '1.6' },
 };
 
-// --- Child Component for Agent Trace ---
+// --- Child Components ---
 const AgentTrace: React.FC<{ steps: TraceStep[] }> = ({ steps }) => (
     <div style={styles.agentTrace}>
         {steps.map((step, index) => {
@@ -65,16 +74,45 @@ const AgentTrace: React.FC<{ steps: TraceStep[] }> = ({ steps }) => (
     </div>
 );
 
+const PlaybookCard: React.FC<{ playbook: Playbook }> = ({ playbook }) => (
+     <div style={{ ...styles.messageBubble, ...styles.agentBubble, width: '100%' }}>
+        <h3 style={styles.resultTitle}>{playbook.playbook_title}</h3>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', whiteSpace: 'pre-wrap' }}>
+            <div>
+                <strong>Phase 1: Discovery & Data Harvesting (First 2 Weeks)</strong>
+                <ul style={{ margin: '5px 0 0 20px', padding: 0, listStyleType: 'disc' }}>
+                    <li><strong>Campaigns:</strong> {playbook.phase_1_campaigns.join(', ')}</li>
+                    <li><strong>Keywords:</strong> {playbook.phase_1_keywords.join(', ')}</li>
+                    <li><strong>Initial Bid:</strong> {playbook.initial_bid}</li>
+                    <li><strong>Initial Automation:</strong> "{playbook.initial_automation_rule_name}" ({playbook.initial_automation_rule_goal})</li>
+                </ul>
+            </div>
+            <div>
+                <strong>Phase 2: Profitability Optimization (Ongoing)</strong>
+                <p style={{ margin: '5px 0 0 0' }}>{playbook.phase_2_strategy}</p>
+            </div>
+        </div>
+    </div>
+);
+
+const SuggestedRuleCard: React.FC<{ result: { rule: SuggestedRule; reasoning: string } }> = ({ result }) => (
+    <div style={{ ...styles.messageBubble, ...styles.agentBubble }}>
+        <h3 style={styles.resultTitle}>Final Answer: Suggested Rule "{result.rule.name}"</h3>
+        <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: 0 }}>{result.reasoning}</p>
+    </div>
+);
+
+// --- Main Suggester Component ---
 export function AIRuleSuggester() {
     const [isNewProduct, setIsNewProduct] = useState(false);
-    const [existingProductInputs, setExistingProductInputs] = useState({ asin: '', salePrice: '', productCost: '', fbaFee: '', referralFeePercent: '15', ruleType: 'BID_ADJUSTMENT' });
+    
+    // Form state
+    const [existingProductInputs, setExistingProductInputs] = useState({ asin: 'B0DD45VPSL', salePrice: '27', productCost: '7', fbaFee: '7', referralFeePercent: '15', ruleType: 'BID_ADJUSTMENT' });
     const [newProductInputs, setNewProductInputs] = useState({ description: '', competitors: '', usp: '', goal: '' });
     
-    const today = new Date();
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    const [dateRange, setDateRange] = useState({ start: thirtyDaysAgo.toISOString().split('T')[0], end: today.toISOString().split('T')[0] });
+    const [dateRange, setDateRange] = useState({ start: new Date(2025, 7, 28).toISOString().split('T')[0], end: new Date(2025, 8, 27).toISOString().split('T')[0] });
 
+    // Chat state
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [conversationId, setConversationId] = useState<string | null>(null);
@@ -98,10 +136,43 @@ export function AIRuleSuggester() {
             if (lastMessage && lastMessage.type === 'agent_trace') {
                 const updatedTrace = [...lastMessage.content, { type, content }];
                 return [...prev.slice(0, -1), { ...lastMessage, content: updatedTrace }];
-            } else {
-                return [...prev, { type: 'agent_trace', content: [{ type, content }], id: Date.now() }];
             }
+            return [...prev, { type: 'agent_trace', content: [{ type, content }], id: Date.now() }];
         });
+    };
+
+    // FIX 1 & 2: Centralized stream processing logic
+    const processStream = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split('\n\n');
+            
+            for (let i = 0; i < parts.length - 1; i++) {
+                const part = parts[i];
+                if (part.startsWith('data: ')) {
+                    try {
+                        const jsonData = JSON.parse(part.substring(6));
+                        if (jsonData.type === 'conversationStart') {
+                            setConversationId(jsonData.content.conversationId);
+                        } else if (jsonData.type === 'agent') {
+                            appendToHistory('agent', jsonData.content);
+                        } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
+                            appendToTrace(jsonData.type, jsonData.content);
+                        } else if (jsonData.type === 'result') {
+                            appendToHistory('rule', jsonData.content);
+                        } else if (jsonData.type === 'error') {
+                            throw new Error(jsonData.content);
+                        }
+                    } catch(e) { console.error("Stream parse error:", e, "Part:", part); }
+                }
+            }
+            buffer = parts[parts.length - 1];
+        }
     };
 
     const handleInitialSubmit = useCallback(async () => {
@@ -123,62 +194,19 @@ export function AIRuleSuggester() {
                 throw new Error(errorData.message || 'Failed to start suggestion.');
             }
 
+            // FIX 3: Correctly handle non-streaming response for "New Product"
             if (isNewProduct) {
-                // Handle non-streaming JSON response for new products
                 const result = await response.json();
                 if (result.type === 'playbook' && result.content) {
-                    const playbook = result.content;
-                    const playbookContent = `
-### Launch Plan: ${playbook.playbook_title}
-
-#### Phase 1: Discovery & Data Harvesting (First 2 Weeks)
-*   **Campaigns:** ${playbook.phase_1_campaigns.join(', ')}
-*   **Keywords:** ${playbook.phase_1_keywords.join(', ')}
-*   **Initial Bid:** ${playbook.initial_bid}
-*   **Initial Automation Rule:** ${playbook.initial_automation_rule_name}
-    *   *Goal:* ${playbook.initial_automation_rule_goal}
-
-#### Phase 2: Profitability Optimization (Ongoing)
-*   **Strategy:** ${playbook.phase_2_strategy}
-                    `.trim().replace(/^ +/gm, '');
-                    appendToHistory('agent', playbookContent);
+                    appendToHistory('playbook', result.content);
                 } else {
                     throw new Error("Received an unexpected response for the new product plan.");
                 }
             } else {
-                // Handle streaming response for existing products
+                // FIX 1 & 2: Handle streaming response correctly, including agent summary
                 if (!response.body) throw new Error('Response body is missing for streaming.');
                 const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const parts = buffer.split('\n\n');
-                    
-                    for (let i = 0; i < parts.length - 1; i++) {
-                        const part = parts[i];
-                        if (part.startsWith('data: ')) {
-                            try {
-                                const jsonData = JSON.parse(part.substring(6));
-                                if (jsonData.type === 'conversationStart') {
-                                    setConversationId(jsonData.content.conversationId);
-                                } else if (jsonData.type === 'agent') {
-                                    appendToHistory('agent', jsonData.content);
-                                } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
-                                    appendToTrace(jsonData.type, jsonData.content);
-                                } else if (jsonData.type === 'result') {
-                                    appendToHistory('rule', jsonData.content);
-                                } else if (jsonData.type === 'error') {
-                                    throw new Error(jsonData.content);
-                                }
-                            } catch(e) { console.error("Stream parse error:", e); }
-                        }
-                    }
-                    buffer = parts[parts.length - 1];
-                }
+                await processStream(reader);
             }
         } catch (err) {
             appendToHistory('error', err instanceof Error ? err.message : 'An unknown error occurred.');
@@ -209,40 +237,13 @@ export function AIRuleSuggester() {
             }
             
             const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const parts = buffer.split('\n\n');
-                
-                for (let i = 0; i < parts.length - 1; i++) {
-                    const part = parts[i];
-                    if (part.startsWith('data: ')) {
-                        try {
-                            const jsonData = JSON.parse(part.substring(6));
-                            if (jsonData.type === 'agent') {
-                                appendToHistory('agent', jsonData.content);
-                            } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
-                                appendToTrace(jsonData.type, jsonData.content);
-                            } else if (jsonData.type === 'result') {
-                                appendToHistory('rule', jsonData.content);
-                            } else if (jsonData.type === 'error') {
-                                throw new Error(jsonData.content);
-                            }
-                        } catch(e) { console.error("Chat stream parse error:", e); }
-                    }
-                }
-                buffer = parts[parts.length - 1];
-            }
+            await processStream(reader);
         } catch (err) {
             appendToHistory('error', err instanceof Error ? err.message : 'Failed to get a response.');
         } finally {
             setLoading(false);
         }
-    }, [conversationId, loading]);
+    }, [conversationId, chatInput, loading]);
 
     const renderMessageContent = (message: ChatMessage) => {
         switch (message.type) {
@@ -250,12 +251,8 @@ export function AIRuleSuggester() {
             case 'agent': return <div style={{ ...styles.messageBubble, ...styles.agentBubble }}><p style={{margin:0, whiteSpace: 'pre-wrap'}}>{message.content}</p></div>;
             case 'error': return <div style={styles.error}>{message.content}</div>;
             case 'agent_trace': return <AgentTrace steps={message.content} />;
-            case 'rule': return (
-                <div style={{ ...styles.messageBubble, ...styles.agentBubble }}>
-                    <h3 style={styles.resultTitle}>Final Answer: Suggested Rule "{message.content.rule.name}"</h3>
-                    <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: 0 }}>{message.content.reasoning}</p>
-                </div>
-            );
+            case 'rule': return <SuggestedRuleCard result={message.content} />;
+            case 'playbook': return <PlaybookCard playbook={message.content} />;
             default: return null;
         }
     };
@@ -263,7 +260,17 @@ export function AIRuleSuggester() {
     return (
         <div style={styles.container}>
             <style>{spinnerKeyframes}</style>
-            <div style={styles.toggleContainer}><span style={styles.toggleLabel}>Sản phẩm có sẵn dữ liệu</span><label style={styles.toggleSwitch}><input type="checkbox" style={styles.toggleInput} checked={!isNewProduct} onChange={() => setIsNewProduct(false)} /><span style={{...styles.toggleSlider, backgroundColor: !isNewProduct ? 'var(--primary-color)' : '#ccc'}}><span style={{...styles.toggleSliderBefore, transform: !isNewProduct ? 'translateX(26px)' : 'translateX(0)'}} /></span></label><span style={styles.toggleLabel}>Sản phẩm mới (không có dữ liệu)</span></div>
+            <div style={styles.toggleContainer}>
+                <span style={styles.toggleLabel}>Sản phẩm có sẵn dữ liệu</span>
+                <label style={styles.toggleSwitch}>
+                    {/* FIX: This input now correctly toggles the isNewProduct state */}
+                    <input type="checkbox" style={styles.toggleInput} checked={isNewProduct} onChange={() => setIsNewProduct(p => !p)} />
+                    <span style={{...styles.toggleSlider, backgroundColor: isNewProduct ? 'var(--primary-color)' : '#ccc'}}>
+                        <span style={{...styles.toggleSliderBefore, transform: isNewProduct ? 'translateX(26px)' : 'translateX(0)'}} />
+                    </span>
+                </label>
+                <span style={styles.toggleLabel}>Sản phẩm mới (không có dữ liệu)</span>
+            </div>
             <div style={styles.contentGrid}>
                 <div style={styles.formCard}>
                     {isNewProduct ? (
