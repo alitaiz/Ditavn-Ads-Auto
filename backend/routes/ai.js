@@ -4,7 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { DynamicTool } from "@langchain/core/tools";
 import { AIMessage, HumanMessage } from "@langchain/core/messages";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { ReActAgent } from "@langchain/langgraph/prebuilt";
+import { createReactAgent } from "@langchain/langgraph/prebuilt";
 import { v4 as uuidv4 } from 'uuid';
 import pool from '../db.js';
 
@@ -196,7 +196,7 @@ const llm = new ChatGoogleGenerativeAI({
     apiKey: process.env.GEMINI_API_KEY,
 });
 
-const agent = new ReActAgent({ llm, tools });
+const agent = createReactAgent({ llm, tools });
 
 // --- Route Handlers ---
 
