@@ -14,9 +14,9 @@ const getSystemInstruction = () => `You are an expert Amazon PPC Analyst named "
 User will provide you with several pieces of data:
 1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage.
 2.  **Performance Data:** This is a JSON object containing up to three data sets:
-    *   `searchTermData`: Aggregated data from the Sponsored Products Search Term Report.
-    *   `streamData`: Aggregated real-time data from the Amazon Marketing Stream.
-    *   `salesTrafficData`: Data from the Sales & Traffic report, which includes organic metrics.
+    *   \`searchTermData\`: Aggregated data from the Sponsored Products Search Term Report.
+    *   \`streamData\`: Aggregated real-time data from the Amazon Marketing Stream.
+    *   \`salesTrafficData\`: Data from the Sales & Traffic report, which includes organic metrics.
 
 Your Task:
 1.  **Always start by acknowledging the data provided.** If some data is missing (e.g., no stream data), mention it.
