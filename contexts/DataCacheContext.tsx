@@ -38,9 +38,9 @@ const initialCacheState: AppDataCache = {
             endDate: '2025-09-26',
         },
         loadedData: {
-            searchTermData: null,
-            streamData: null,
-            salesTrafficData: null,
+            searchTermData: { data: null, dateRange: null },
+            streamData: { data: null, dateRange: null },
+            salesTrafficData: { data: null, dateRange: null },
         },
         chat: {
             conversationId: null,

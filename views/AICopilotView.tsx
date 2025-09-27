@@ -48,7 +48,16 @@ export function AICopilotView() {
     };
 
     const setLoadedData = (key: keyof AICopilotCache['loadedData'], data: any[] | null) => {
-        updateAiCache(prev => ({ ...prev, loadedData: { ...prev.loadedData, [key]: data } }));
+        updateAiCache(prev => ({
+            ...prev,
+            loadedData: {
+                ...prev.loadedData,
+                [key]: {
+                    data: data,
+                    dateRange: prev.dateRange
+                }
+            }
+        }));
     };
 
     const [loading, setLoading] = useState({ st: false, stream: false, sat: false, chat: false });
@@ -106,9 +115,9 @@ export function AICopilotView() {
     const handleViewData = (tool: 'st' | 'stream' | 'sat') => {
         let dataToView: any[] | null = null;
         switch(tool) {
-            case 'st': dataToView = aiCache.loadedData.searchTermData; break;
-            case 'stream': dataToView = aiCache.loadedData.streamData; break;
-            case 'sat': dataToView = aiCache.loadedData.salesTrafficData; break;
+            case 'st': dataToView = aiCache.loadedData.searchTermData.data; break;
+            case 'stream': dataToView = aiCache.loadedData.streamData.data; break;
+            case 'sat': dataToView = aiCache.loadedData.salesTrafficData.data; break;
         }
 
         if (dataToView && dataToView.length > 0) {
@@ -140,7 +149,11 @@ export function AICopilotView() {
                 conversationId: aiCache.chat.conversationId,
                 context: {
                     productInfo: aiCache.productInfo,
-                    performanceData: aiCache.loadedData
+                    performanceData: {
+                        searchTermData: aiCache.loadedData.searchTermData.data,
+                        streamData: aiCache.loadedData.streamData.data,
+                        salesTrafficData: aiCache.loadedData.salesTrafficData.data,
+                    }
                 }
             };
 
@@ -241,9 +254,9 @@ export function AICopilotView() {
                         </div>
                     </div>
                     <div style={{marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px'}}>
-                        <ToolButton tool="st" onRun={handleLoadData} onView={handleViewData} loading={loading.st} data={aiCache.loadedData.searchTermData} error={error.st} name="Search Term Report" />
-                        <ToolButton tool="stream" onRun={handleLoadData} onView={handleViewData} loading={loading.stream} data={aiCache.loadedData.streamData} error={error.stream} name="Stream Data" />
-                        <ToolButton tool="sat" onRun={handleLoadData} onView={handleViewData} loading={loading.sat} data={aiCache.loadedData.salesTrafficData} error={error.sat} name="Sales & Traffic" />
+                        <ToolButton tool="st" onRun={handleLoadData} onView={handleViewData} loading={loading.st} dataInfo={aiCache.loadedData.searchTermData} error={error.st} name="Search Term Report" />
+                        <ToolButton tool="stream" onRun={handleLoadData} onView={handleViewData} loading={loading.stream} dataInfo={aiCache.loadedData.streamData} error={error.stream} name="Stream Data" />
+                        <ToolButton tool="sat" onRun={handleLoadData} onView={handleViewData} loading={loading.sat} dataInfo={aiCache.loadedData.salesTrafficData} error={error.sat} name="Sales & Traffic" />
                     </div>
                 </div>
             </div>
@@ -269,24 +282,36 @@ export function AICopilotView() {
     );
 }
 
-const ToolButton = ({ tool, onRun, onView, loading, data, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, onView: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, data: any[] | null, error: string, name: string }) => (
-    <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontWeight: 500 }}>{name}</span>
-            <button type="button" onClick={() => onRun(tool)} style={styles.toolButton} disabled={loading}>
-                {loading ? 'Loading...' : (data ? 'Reload' : 'Load')}
-            </button>
+const ToolButton = ({ tool, onRun, onView, loading, dataInfo, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, onView: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, dataInfo: AICopilotCache['loadedData']['searchTermData'], error: string, name: string }) => {
+    
+    const formatDate = (dateStr: string) => {
+        // Add 'T00:00:00Z' to treat the date as UTC, avoiding timezone shifts from local interpretation.
+        return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    };
+
+    const dateRangeText = dataInfo?.dateRange 
+        ? ` (${formatDate(dataInfo.dateRange.startDate)} - ${formatDate(dataInfo.dateRange.endDate)})`
+        : '';
+    
+    return (
+        <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 500 }}>{name}</span>
+                <button type="button" onClick={() => onRun(tool)} style={styles.toolButton} disabled={loading}>
+                    {loading ? 'Loading...' : (dataInfo?.data ? 'Reload' : 'Load')}
+                </button>
+            </div>
+            {error && <p style={styles.error}>{error}</p>}
+            {dataInfo?.data && (
+                <button
+                    type="button"
+                    onClick={() => onView(tool)}
+                    style={{...styles.toolStatus, cursor: 'pointer', border: 'none', background: 'none', padding: 0, textAlign: 'left', color: 'var(--primary-color)'}}
+                    title="Click to view loaded data in a new tab"
+                >
+                    ✅ Loaded {Array.isArray(dataInfo.data) ? `${dataInfo.data.length} records` : 'data'}{dateRangeText}.
+                </button>
+            )}
         </div>
-        {error && <p style={styles.error}>{error}</p>}
-        {data && (
-            <button
-                type="button"
-                onClick={() => onView(tool)}
-                style={{...styles.toolStatus, cursor: 'pointer', border: 'none', background: 'none', padding: 0, textAlign: 'left', color: 'var(--primary-color)'}}
-                title="Click to view loaded data in a new tab"
-            >
-                ✅ Loaded {Array.isArray(data) ? `${data.length} records` : 'data'}.
-            </button>
-        )}
-    </div>
-);
+    );
+};

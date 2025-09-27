@@ -220,6 +220,14 @@ export interface ChatMessage {
     text: string;
 }
 
+export interface LoadedDataInfo {
+    data: any[] | null;
+    dateRange: {
+        startDate: string;
+        endDate: string;
+    } | null;
+}
+
 export interface AICopilotCache {
     productInfo: {
         asin: string;
@@ -233,9 +241,9 @@ export interface AICopilotCache {
         endDate: string;
     };
     loadedData: {
-        searchTermData: any[] | null;
-        streamData: any[] | null;
-        salesTrafficData: any[] | null;
+        searchTermData: LoadedDataInfo;
+        streamData: LoadedDataInfo;
+        salesTrafficData: LoadedDataInfo;
     };
     chat: {
         conversationId: string | null;
