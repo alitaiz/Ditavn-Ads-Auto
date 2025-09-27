@@ -66,16 +66,19 @@ const styles: { [key: string]: React.CSSProperties } = {
 
 // --- Child Components ---
 const AgentTrace: React.FC<{ steps: TraceStep[] }> = ({ steps }) => (
-    <div style={styles.agentTrace}>
-        {steps.map((step, index) => {
-            const label = step.type.charAt(0).toUpperCase() + step.type.slice(1);
-            return <div key={index}><strong>{label}:</strong> {step.content}</div>;
-        })}
-    </div>
+    <details style={{alignSelf: 'flex-start', width: '100%', maxWidth: '85%'}}>
+        <summary style={{cursor: 'pointer', fontWeight: 500}}>View Agent Trace</summary>
+        <div style={{...styles.agentTrace, marginTop: '10px'}}>
+            {steps.map((step, index) => {
+                const label = step.type.charAt(0).toUpperCase() + step.type.slice(1);
+                return <div key={index}><strong>{label}:</strong> {step.content}</div>;
+            })}
+        </div>
+    </details>
 );
 
 const PlaybookCard: React.FC<{ playbook: Playbook }> = ({ playbook }) => (
-     <div style={{ ...styles.messageBubble, ...styles.agentBubble, width: '100%' }}>
+     <div style={{ ...styles.messageBubble, ...styles.agentBubble, width: '100%', maxWidth: '85%' }}>
         <h3 style={styles.resultTitle}>{playbook.playbook_title}</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', whiteSpace: 'pre-wrap' }}>
             <div>
@@ -96,9 +99,10 @@ const PlaybookCard: React.FC<{ playbook: Playbook }> = ({ playbook }) => (
 );
 
 const SuggestedRuleCard: React.FC<{ result: { rule: SuggestedRule; reasoning: string } }> = ({ result }) => (
-    <div style={{ ...styles.messageBubble, ...styles.agentBubble }}>
+    <div style={{ ...styles.messageBubble, ...styles.agentBubble, maxWidth: '85%' }}>
         <h3 style={styles.resultTitle}>Final Answer: Suggested Rule "{result.rule.name}"</h3>
         <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6, margin: 0 }}>{result.reasoning}</p>
+        {/* We can add a "Create Rule" button here later */}
     </div>
 );
 
@@ -141,7 +145,6 @@ export function AIRuleSuggester() {
         });
     };
 
-    // FIX 1 & 2: Centralized stream processing logic
     const processStream = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
         const decoder = new TextDecoder();
         let buffer = '';
@@ -157,16 +160,14 @@ export function AIRuleSuggester() {
                 if (part.startsWith('data: ')) {
                     try {
                         const jsonData = JSON.parse(part.substring(6));
-                        if (jsonData.type === 'conversationStart') {
-                            setConversationId(jsonData.content.conversationId);
-                        } else if (jsonData.type === 'agent') {
-                            appendToHistory('agent', jsonData.content);
-                        } else if (jsonData.type === 'thought' || jsonData.type === 'action' || jsonData.type === 'observation') {
-                            appendToTrace(jsonData.type, jsonData.content);
-                        } else if (jsonData.type === 'result') {
-                            appendToHistory('rule', jsonData.content);
-                        } else if (jsonData.type === 'error') {
-                            throw new Error(jsonData.content);
+                        switch(jsonData.type) {
+                            case 'conversationStart': setConversationId(jsonData.content.conversationId); break;
+                            case 'agent': appendToHistory('agent', jsonData.content); break;
+                            case 'thought':
+                            case 'action':
+                            case 'observation': appendToTrace(jsonData.type, jsonData.content); break;
+                            case 'result': appendToHistory('rule', jsonData.content); break;
+                            case 'error': throw new Error(jsonData.content);
                         }
                     } catch(e) { console.error("Stream parse error:", e, "Part:", part); }
                 }
@@ -194,7 +195,6 @@ export function AIRuleSuggester() {
                 throw new Error(errorData.message || 'Failed to start suggestion.');
             }
 
-            // FIX 3: Correctly handle non-streaming response for "New Product"
             if (isNewProduct) {
                 const result = await response.json();
                 if (result.type === 'playbook' && result.content) {
@@ -203,7 +203,6 @@ export function AIRuleSuggester() {
                     throw new Error("Received an unexpected response for the new product plan.");
                 }
             } else {
-                // FIX 1 & 2: Handle streaming response correctly, including agent summary
                 if (!response.body) throw new Error('Response body is missing for streaming.');
                 const reader = response.body.getReader();
                 await processStream(reader);
@@ -263,7 +262,6 @@ export function AIRuleSuggester() {
             <div style={styles.toggleContainer}>
                 <span style={styles.toggleLabel}>Sản phẩm có sẵn dữ liệu</span>
                 <label style={styles.toggleSwitch}>
-                    {/* FIX: This input now correctly toggles the isNewProduct state */}
                     <input type="checkbox" style={styles.toggleInput} checked={isNewProduct} onChange={() => setIsNewProduct(p => !p)} />
                     <span style={{...styles.toggleSlider, backgroundColor: isNewProduct ? 'var(--primary-color)' : '#ccc'}}>
                         <span style={{...styles.toggleSliderBefore, transform: isNewProduct ? 'translateX(26px)' : 'translateX(0)'}} />
