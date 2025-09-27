@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
@@ -10,7 +9,8 @@ import { SalesAndTrafficView } from './views/SalesAndTrafficView';
 import { SPSearchTermsView } from './views/SPSearchTermsView';
 import { DatabaseView } from './views/DatabaseView';
 import { AutomationView } from './views/AutomationView';
-import { AICopilotView } from './views/AICopilotView'; // Import the new view
+import { AICopilotView } from './views/AICopilotView';
+import { DataViewer } from './views/components/DataViewer'; // Import the new viewer component
 import { DataCacheProvider } from './contexts/DataCacheContext';
 
 // Basic global styles
@@ -41,22 +41,23 @@ const styles = `
 `;
 
 function App() {
-  // Encapsulate global style injection within a useEffect to ensure it runs
-  // after the component mounts, preventing potential module initialization race conditions.
   useEffect(() => {
     const styleSheet = document.createElement("style");
     styleSheet.innerText = styles;
     document.head.appendChild(styleSheet);
     
-    // Return a cleanup function to remove the stylesheet when the component unmounts.
     return () => {
       document.head.removeChild(styleSheet);
     };
-  }, []); // Empty dependency array ensures this effect runs only once.
+  }, []);
 
   return (
     <HashRouter>
       <Routes>
+        {/* Standalone route for the data viewer, outside the main layout */}
+        <Route path="data-viewer/:dataKey" element={<DataViewer />} />
+
+        {/* Main application routes with shared layout */}
         <Route path="/" element={<Layout />}>
           <Route index element={<Navigate to="/campaigns" replace />} />
           <Route path="campaigns" element={<PPCManagementView />} />
@@ -66,7 +67,7 @@ function App() {
           <Route path="sales-and-traffic" element={<SalesAndTrafficView />} />
           <Route path="database" element={<DatabaseView />} />
           <Route path="automation" element={<AutomationView />} />
-          <Route path="ai-copilot" element={<AICopilotView />} /> {/* Add new route */}
+          <Route path="ai-copilot" element={<AICopilotView />} />
           <Route path="*" element={<Navigate to="/campaigns" replace />} />
         </Route>
       </Routes>

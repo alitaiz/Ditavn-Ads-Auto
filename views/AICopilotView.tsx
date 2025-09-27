@@ -32,7 +32,6 @@ export function AICopilotView() {
     const { cache, setCache } = useContext(DataCacheContext);
     const aiCache = cache.aiCopilot;
 
-    // Helper functions to update specific parts of the AI Copilot cache
     const updateAiCache = (updater: (prev: AICopilotCache) => AICopilotCache) => {
         setCache(prevCache => ({
             ...prevCache,
@@ -52,7 +51,6 @@ export function AICopilotView() {
         updateAiCache(prev => ({ ...prev, loadedData: { ...prev.loadedData, [key]: data } }));
     };
 
-    // Use local state for transient UI states like loading, errors, and current input value
     const [loading, setLoading] = useState({ st: false, stream: false, sat: false, chat: false });
     const [error, setError] = useState({ st: '', stream: '', sat: '', chat: '' });
     const [currentQuestion, setCurrentQuestion] = useState('');
@@ -105,6 +103,21 @@ export function AICopilotView() {
         }
     };
 
+    const handleViewData = (tool: 'st' | 'stream' | 'sat') => {
+        let dataToView: any[] | null = null;
+        switch(tool) {
+            case 'st': dataToView = aiCache.loadedData.searchTermData; break;
+            case 'stream': dataToView = aiCache.loadedData.streamData; break;
+            case 'sat': dataToView = aiCache.loadedData.salesTrafficData; break;
+        }
+
+        if (dataToView && dataToView.length > 0) {
+            const key = `ai-data-viewer-${tool}-${Date.now()}`;
+            sessionStorage.setItem(key, JSON.stringify(dataToView));
+            window.open(`#/data-viewer/${key}`, '_blank');
+        }
+    };
+
     const handleStartConversation = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!currentQuestion.trim()) return;
@@ -112,7 +125,6 @@ export function AICopilotView() {
         const questionToAsk = currentQuestion;
         const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: questionToAsk };
 
-        // Add user message to the cache
         updateAiCache(prev => ({
             ...prev,
             chat: { ...prev.chat, messages: [...prev.chat.messages, newUserMessage] }
@@ -120,7 +132,7 @@ export function AICopilotView() {
         
         setLoading(prev => ({...prev, chat: true}));
         setError(prev => ({...prev, chat: ''}));
-        setCurrentQuestion(''); // Clear input after sending
+        setCurrentQuestion('');
 
         try {
             const payload = {
@@ -161,9 +173,6 @@ export function AICopilotView() {
 
                         if (isFirstChunk) {
                             isFirstChunk = false;
-                            // Add placeholder for the AI's response to the cache
-                            // FIX: Explicitly type the new message to satisfy the ChatMessage interface,
-                            // preventing TypeScript from widening the 'sender' property to a generic 'string'.
                             updateAiCache(prev => {
                                 const newConversationId = parsed.conversationId || prev.chat.conversationId;
                                 const newAiMessagePlaceholder: ChatMessage = { id: currentAiMessageId, sender: 'ai', text: '' };
@@ -180,7 +189,6 @@ export function AICopilotView() {
 
                         if (parsed.content) {
                             aiResponseText += parsed.content;
-                            // Update the AI's message in the cache as new content arrives
                             updateAiCache(prev => ({
                                 ...prev,
                                 chat: {
@@ -233,9 +241,9 @@ export function AICopilotView() {
                         </div>
                     </div>
                     <div style={{marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px'}}>
-                        <ToolButton tool="st" onRun={handleLoadData} loading={loading.st} data={aiCache.loadedData.searchTermData} error={error.st} name="Search Term Report" />
-                        <ToolButton tool="stream" onRun={handleLoadData} loading={loading.stream} data={aiCache.loadedData.streamData} error={error.stream} name="Stream Data" />
-                        <ToolButton tool="sat" onRun={handleLoadData} loading={loading.sat} data={aiCache.loadedData.salesTrafficData} error={error.sat} name="Sales & Traffic" />
+                        <ToolButton tool="st" onRun={handleLoadData} onView={handleViewData} loading={loading.st} data={aiCache.loadedData.searchTermData} error={error.st} name="Search Term Report" />
+                        <ToolButton tool="stream" onRun={handleLoadData} onView={handleViewData} loading={loading.stream} data={aiCache.loadedData.streamData} error={error.stream} name="Stream Data" />
+                        <ToolButton tool="sat" onRun={handleLoadData} onView={handleViewData} loading={loading.sat} data={aiCache.loadedData.salesTrafficData} error={error.sat} name="Sales & Traffic" />
                     </div>
                 </div>
             </div>
@@ -261,7 +269,7 @@ export function AICopilotView() {
     );
 }
 
-const ToolButton = ({ tool, onRun, loading, data, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, data: any[] | null, error: string, name: string }) => (
+const ToolButton = ({ tool, onRun, onView, loading, data, error, name }: { tool: 'st' | 'stream' | 'sat', onRun: (tool: 'st' | 'stream' | 'sat') => void, onView: (tool: 'st' | 'stream' | 'sat') => void, loading: boolean, data: any[] | null, error: string, name: string }) => (
     <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontWeight: 500 }}>{name}</span>
@@ -270,6 +278,15 @@ const ToolButton = ({ tool, onRun, loading, data, error, name }: { tool: 'st' | 
             </button>
         </div>
         {error && <p style={styles.error}>{error}</p>}
-        {data && <p style={styles.toolStatus}>✅ Loaded {Array.isArray(data) ? `${data.length} records` : 'data'}.</p>}
+        {data && (
+            <button
+                type="button"
+                onClick={() => onView(tool)}
+                style={{...styles.toolStatus, cursor: 'pointer', border: 'none', background: 'none', padding: 0, textAlign: 'left', color: 'var(--primary-color)'}}
+                title="Click to view loaded data in a new tab"
+            >
+                ✅ Loaded {Array.isArray(data) ? `${data.length} records` : 'data'}.
+            </button>
+        )}
     </div>
 );
