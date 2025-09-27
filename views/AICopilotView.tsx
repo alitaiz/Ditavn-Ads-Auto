@@ -1,6 +1,8 @@
 // views/AICopilotView.tsx
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import { marked } from 'marked';
+import { DataCacheContext } from '../contexts/DataCacheContext';
+import { ChatMessage, AICopilotCache } from '../types';
 
 const styles: { [key: string]: React.CSSProperties } = {
     container: { display: 'grid', gridTemplateColumns: '40% 60%', gap: '20px', height: 'calc(100vh - 100px)', padding: '20px' },
@@ -26,60 +28,60 @@ const styles: { [key: string]: React.CSSProperties } = {
     error: { color: 'var(--danger-color)', fontSize: '0.9rem', marginTop: '5px' },
 };
 
-interface ChatMessage {
-    id: number;
-    sender: 'user' | 'ai';
-    text: string;
-}
-
 export function AICopilotView() {
-    // Input states
-    const [asin, setAsin] = useState('B0DD45VPSL');
-    const [salePrice, setSalePrice] = useState('27');
-    const [cost, setCost] = useState('7');
-    const [fbaFee, setFbaFee] = useState('7.4');
-    const [referralFeePercent, setReferralFeePercent] = useState('15');
-    const [startDate, setStartDate] = useState('2025-09-01');
-    const [endDate, setEndDate] = useState('2025-09-26');
+    const { cache, setCache } = useContext(DataCacheContext);
+    const aiCache = cache.aiCopilot;
 
-    // Loaded data states
-    const [searchTermData, setSearchTermData] = useState<any[] | null>(null);
-    const [streamData, setStreamData] = useState<any[] | null>(null);
-    const [salesTrafficData, setSalesTrafficData] = useState<any[] | null>(null);
+    // Helper functions to update specific parts of the AI Copilot cache
+    const updateAiCache = (updater: (prev: AICopilotCache) => AICopilotCache) => {
+        setCache(prevCache => ({
+            ...prevCache,
+            aiCopilot: updater(prevCache.aiCopilot),
+        }));
+    };
 
-    // Loading & error states for tools
+    const setProductInfo = (key: keyof AICopilotCache['productInfo'], value: string) => {
+        updateAiCache(prev => ({ ...prev, productInfo: { ...prev.productInfo, [key]: value } }));
+    };
+
+    const setDateRange = (key: keyof AICopilotCache['dateRange'], value: string) => {
+        updateAiCache(prev => ({ ...prev, dateRange: { ...prev.dateRange, [key]: value } }));
+    };
+
+    const setLoadedData = (key: keyof AICopilotCache['loadedData'], data: any[] | null) => {
+        updateAiCache(prev => ({ ...prev, loadedData: { ...prev.loadedData, [key]: data } }));
+    };
+
+    // Use local state for transient UI states like loading, errors, and current input value
     const [loading, setLoading] = useState({ st: false, stream: false, sat: false, chat: false });
     const [error, setError] = useState({ st: '', stream: '', sat: '', chat: '' });
-
-    // Chat states
-    const [conversationId, setConversationId] = useState<string | null>(null);
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [currentQuestion, setCurrentQuestion] = useState('');
+    
     const chatEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+    }, [aiCache.chat.messages]);
 
     const handleLoadData = async (tool: 'st' | 'stream' | 'sat') => {
         setLoading(prev => ({ ...prev, [tool]: true }));
         setError(prev => ({ ...prev, [tool]: '' }));
         
         let endpoint = '';
-        let setDataFunc: React.Dispatch<React.SetStateAction<any>>;
+        let setDataFunc: (data: any[] | null) => void;
 
         switch (tool) {
             case 'st': 
                 endpoint = '/api/ai/tool/search-term';
-                setDataFunc = setSearchTermData;
+                setDataFunc = (data) => setLoadedData('searchTermData', data);
                 break;
             case 'stream':
                 endpoint = '/api/ai/tool/stream';
-                setDataFunc = setStreamData;
+                setDataFunc = (data) => setLoadedData('streamData', data);
                 break;
             case 'sat':
                 endpoint = '/api/ai/tool/sales-traffic';
-                setDataFunc = setSalesTrafficData;
+                setDataFunc = (data) => setLoadedData('salesTrafficData', data);
                 break;
         }
 
@@ -87,7 +89,11 @@ export function AICopilotView() {
             const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ asin, startDate, endDate }),
+                body: JSON.stringify({ 
+                    asin: aiCache.productInfo.asin, 
+                    startDate: aiCache.dateRange.startDate, 
+                    endDate: aiCache.dateRange.endDate 
+                }),
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Failed to load data.');
@@ -103,21 +109,26 @@ export function AICopilotView() {
         e.preventDefault();
         if (!currentQuestion.trim()) return;
 
-        const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: currentQuestion };
-        setMessages(prev => [...prev, newUserMessage]);
+        const questionToAsk = currentQuestion;
+        const newUserMessage: ChatMessage = { id: Date.now(), sender: 'user', text: questionToAsk };
+
+        // Add user message to the cache
+        updateAiCache(prev => ({
+            ...prev,
+            chat: { ...prev.chat, messages: [...prev.chat.messages, newUserMessage] }
+        }));
         
         setLoading(prev => ({...prev, chat: true}));
         setError(prev => ({...prev, chat: ''}));
-        const questionToAsk = currentQuestion;
         setCurrentQuestion(''); // Clear input after sending
 
         try {
             const payload = {
                 question: questionToAsk,
-                conversationId: conversationId,
+                conversationId: aiCache.chat.conversationId,
                 context: {
-                    productInfo: { asin, salePrice, cost, fbaFee, referralFeePercent },
-                    performanceData: { searchTermData, streamData, salesTrafficData }
+                    productInfo: aiCache.productInfo,
+                    performanceData: aiCache.loadedData
                 }
             };
 
@@ -149,18 +160,36 @@ export function AICopilotView() {
                         if (parsed.error) throw new Error(parsed.error);
 
                         if (isFirstChunk) {
-                            if (parsed.conversationId) {
-                                setConversationId(parsed.conversationId);
-                            }
-                            setMessages(prev => [...prev, { id: currentAiMessageId, sender: 'ai', text: '' }]);
                             isFirstChunk = false;
+                            // Add placeholder for the AI's response to the cache
+                            // FIX: Explicitly type the new message to satisfy the ChatMessage interface,
+                            // preventing TypeScript from widening the 'sender' property to a generic 'string'.
+                            updateAiCache(prev => {
+                                const newConversationId = parsed.conversationId || prev.chat.conversationId;
+                                const newAiMessagePlaceholder: ChatMessage = { id: currentAiMessageId, sender: 'ai', text: '' };
+                                return {
+                                    ...prev,
+                                    chat: {
+                                        ...prev.chat,
+                                        conversationId: newConversationId,
+                                        messages: [...prev.chat.messages, newAiMessagePlaceholder]
+                                    }
+                                };
+                            });
                         }
 
                         if (parsed.content) {
                             aiResponseText += parsed.content;
-                            setMessages(prev => prev.map(msg => 
-                                msg.id === currentAiMessageId ? { ...msg, text: aiResponseText } : msg
-                            ));
+                            // Update the AI's message in the cache as new content arrives
+                            updateAiCache(prev => ({
+                                ...prev,
+                                chat: {
+                                    ...prev.chat,
+                                    messages: prev.chat.messages.map(msg => 
+                                        msg.id === currentAiMessageId ? { ...msg, text: aiResponseText } : msg
+                                    )
+                                }
+                            }));
                         }
                     } catch (e) {
                          console.error("Error parsing stream chunk:", line, e);
@@ -181,13 +210,13 @@ export function AICopilotView() {
                 <h2>AI Co-Pilot Control Panel</h2>
                 <div style={styles.formGroup}>
                     <label style={styles.label}>ASIN</label>
-                    <input style={styles.input} value={asin} onChange={e => setAsin(e.target.value)} placeholder="e.g., B0DD45VPSL" />
+                    <input style={styles.input} value={aiCache.productInfo.asin} onChange={e => setProductInfo('asin', e.target.value)} placeholder="e.g., B0DD45VPSL" />
                 </div>
                 <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px'}}>
-                    <div style={styles.formGroup}><label style={styles.label}>Sale Price</label><input type="number" style={styles.input} value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="e.g., 29.99" /></div>
-                    <div style={styles.formGroup}><label style={styles.label}>Product Cost</label><input type="number" style={styles.input} value={cost} onChange={e => setCost(e.target.value)} placeholder="e.g., 7.50" /></div>
-                    <div style={styles.formGroup}><label style={styles.label}>FBA Fee</label><input type="number" style={styles.input} value={fbaFee} onChange={e => setFbaFee(e.target.value)} placeholder="e.g., 6.50" /></div>
-                    <div style={styles.formGroup}><label style={styles.label}>Referral Fee (%)</label><input type="number" style={styles.input} value={referralFeePercent} onChange={e => setReferralFeePercent(e.target.value)} placeholder="e.g., 15" /></div>
+                    <div style={styles.formGroup}><label style={styles.label}>Sale Price</label><input type="number" style={styles.input} value={aiCache.productInfo.salePrice} onChange={e => setProductInfo('salePrice', e.target.value)} placeholder="e.g., 29.99" /></div>
+                    <div style={styles.formGroup}><label style={styles.label}>Product Cost</label><input type="number" style={styles.input} value={aiCache.productInfo.cost} onChange={e => setProductInfo('cost', e.target.value)} placeholder="e.g., 7.50" /></div>
+                    <div style={styles.formGroup}><label style={styles.label}>FBA Fee</label><input type="number" style={styles.input} value={aiCache.productInfo.fbaFee} onChange={e => setProductInfo('fbaFee', e.target.value)} placeholder="e.g., 6.50" /></div>
+                    <div style={styles.formGroup}><label style={styles.label}>Referral Fee (%)</label><input type="number" style={styles.input} value={aiCache.productInfo.referralFeePercent} onChange={e => setProductInfo('referralFeePercent', e.target.value)} placeholder="e.g., 15" /></div>
                 </div>
 
                 <hr style={{border: 'none', borderTop: '1px solid var(--border-color)', margin: '10px 0'}}/>
@@ -199,26 +228,26 @@ export function AICopilotView() {
                     <div style={styles.formGroup}>
                         <label style={styles.label}>Date Range</label>
                         <div style={styles.dateInputContainer}>
-                            <input type="date" style={styles.input} value={startDate} onChange={e => setStartDate(e.target.value)} />
-                            <input type="date" style={styles.input} value={endDate} onChange={e => setEndDate(e.target.value)} />
+                            <input type="date" style={styles.input} value={aiCache.dateRange.startDate} onChange={e => setDateRange('startDate', e.target.value)} />
+                            <input type="date" style={styles.input} value={aiCache.dateRange.endDate} onChange={e => setDateRange('endDate', e.target.value)} />
                         </div>
                     </div>
                     <div style={{marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px'}}>
-                        <ToolButton tool="st" onRun={handleLoadData} loading={loading.st} data={searchTermData} error={error.st} name="Search Term Report" />
-                        <ToolButton tool="stream" onRun={handleLoadData} loading={loading.stream} data={streamData} error={error.stream} name="Stream Data" />
-                        <ToolButton tool="sat" onRun={handleLoadData} loading={loading.sat} data={salesTrafficData} error={error.sat} name="Sales & Traffic" />
+                        <ToolButton tool="st" onRun={handleLoadData} loading={loading.st} data={aiCache.loadedData.searchTermData} error={error.st} name="Search Term Report" />
+                        <ToolButton tool="stream" onRun={handleLoadData} loading={loading.stream} data={aiCache.loadedData.streamData} error={error.stream} name="Stream Data" />
+                        <ToolButton tool="sat" onRun={handleLoadData} loading={loading.sat} data={aiCache.loadedData.salesTrafficData} error={error.sat} name="Sales & Traffic" />
                     </div>
                 </div>
             </div>
             <div style={styles.rightPanel}>
                 <div style={styles.chatWindow} ref={chatEndRef}>
-                    {messages.length === 0 && <p style={{textAlign: 'center', color: '#888'}}>Load data and ask a question to start your conversation.</p>}
-                    {messages.map(msg => (
+                    {aiCache.chat.messages.length === 0 && <p style={{textAlign: 'center', color: '#888'}}>Load data and ask a question to start your conversation.</p>}
+                    {aiCache.chat.messages.map(msg => (
                         <div key={msg.id} style={{...styles.message, ...(msg.sender === 'user' ? styles.userMessage : styles.aiMessage), display: 'flex', flexDirection: 'column'}}>
                              <div dangerouslySetInnerHTML={{ __html: marked(msg.text) }}></div>
                         </div>
                     ))}
-                    {loading.chat && messages.length > 0 && messages[messages.length - 1].sender === 'user' && (
+                    {loading.chat && aiCache.chat.messages.length > 0 && aiCache.chat.messages[aiCache.chat.messages.length - 1].sender === 'user' && (
                         <div style={{...styles.message, ...styles.aiMessage}}><em style={{color: '#666'}}>AI is thinking...</em></div>
                     )}
                     {error.chat && <div style={{...styles.message, ...styles.aiMessage, backgroundColor: '#fdd', color: 'var(--danger-color)'}}>{error.chat}</div>}

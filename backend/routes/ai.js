@@ -34,17 +34,55 @@ router.post('/ai/tool/search-term', async (req, res) => {
     }
     try {
         const query = `
-            SELECT 
+            WITH combined_reports AS (
+                -- Sponsored Products
+                SELECT
+                    customer_search_term,
+                    impressions,
+                    clicks,
+                    cost,
+                    sales_7d as sales,
+                    purchases_7d as orders
+                FROM sponsored_products_search_term_report
+                WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+                
+                UNION ALL
+
+                -- Sponsored Brands
+                SELECT
+                    customer_search_term,
+                    impressions,
+                    clicks,
+                    cost,
+                    sales,
+                    purchases as orders
+                FROM sponsored_brands_search_term_report
+                WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+
+                UNION ALL
+
+                -- Sponsored Display
+                SELECT
+                    targeting_text as customer_search_term,
+                    impressions,
+                    clicks,
+                    cost,
+                    sales,
+                    purchases as orders
+                FROM sponsored_display_targeting_report
+                WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+            )
+            SELECT
                 customer_search_term,
-                SUM(impressions) as impressions,
-                SUM(clicks) as clicks,
-                SUM(cost) as spend,
-                SUM(sales_7d) as sales,
-                SUM(purchases_7d) as orders
-            FROM sponsored_products_search_term_report
-            WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+                SUM(COALESCE(impressions, 0)) as impressions,
+                SUM(COALESCE(clicks, 0)) as clicks,
+                SUM(COALESCE(cost, 0)) as spend,
+                SUM(COALESCE(sales, 0)) as sales,
+                SUM(COALESCE(orders, 0)) as orders
+            FROM combined_reports
+            WHERE customer_search_term IS NOT NULL
             GROUP BY customer_search_term
-            ORDER BY SUM(cost) DESC;
+            ORDER BY SUM(COALESCE(cost, 0)) DESC;
         `;
         const { rows } = await pool.query(query, [asin, startDate, endDate]);
         res.json(rows);

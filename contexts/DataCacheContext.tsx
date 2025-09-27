@@ -25,6 +25,28 @@ const initialCacheState: AppDataCache = {
         data: [],
         filters: null,
     },
+    aiCopilot: {
+        productInfo: {
+            asin: 'B0DD45VPSL',
+            salePrice: '27',
+            cost: '7',
+            fbaFee: '7.4',
+            referralFeePercent: '15',
+        },
+        dateRange: {
+            startDate: '2025-09-01',
+            endDate: '2025-09-26',
+        },
+        loadedData: {
+            searchTermData: null,
+            streamData: null,
+            salesTrafficData: null,
+        },
+        chat: {
+            conversationId: null,
+            messages: [],
+        },
+    },
 };
 
 interface DataCacheContextType {

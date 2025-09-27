@@ -214,9 +214,39 @@ export interface SalesAndTrafficCache {
     } | null;
 }
 
+export interface ChatMessage {
+    id: number;
+    sender: 'user' | 'ai';
+    text: string;
+}
+
+export interface AICopilotCache {
+    productInfo: {
+        asin: string;
+        salePrice: string;
+        cost: string;
+        fbaFee: string;
+        referralFeePercent: string;
+    };
+    dateRange: {
+        startDate: string;
+        endDate: string;
+    };
+    loadedData: {
+        searchTermData: any[] | null;
+        streamData: any[] | null;
+        salesTrafficData: any[] | null;
+    };
+    chat: {
+        conversationId: string | null;
+        messages: ChatMessage[];
+    };
+}
+
 
 export interface AppDataCache {
     ppcManagement: PPCManagementCache;
     spSearchTerms: SPSearchTermsCache;
     salesAndTraffic: SalesAndTrafficCache;
+    aiCopilot: AICopilotCache;
 }
