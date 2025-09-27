@@ -13,9 +13,9 @@ const conversations = new Map(); // In-memory conversation store
 
 // --- Tool Definitions ---
 
-const databaseTool = new DynamicTool({
-    name: "get_product_performance",
-    description: "Queries the database to get advertising performance data (spend, PPC sales, PPC orders, etc.) for a specific ASIN within a date range. It intelligently combines historical report data with real-time stream data to provide the most accurate and up-to-date analysis, preventing any data duplication.",
+const asinPerformanceSummaryTool = new DynamicTool({
+    name: "get_asin_performance_summary",
+    description: "Queries the database to get an AGGREGATED advertising performance summary (total spend, PPC sales, etc.) for a specific ASIN within a date range. Use this for high-level analysis or for BID_ADJUSTMENT and BUDGET_ACCELERATION rules. Requires `asin`, `startDate`, and `endDate` as input.",
     func: async ({ asin, startDate, endDate }) => {
         if (!asin || !startDate || !endDate) {
             return "Error: Missing required parameters. Please provide asin, startDate, and endDate.";
@@ -23,7 +23,6 @@ const databaseTool = new DynamicTool({
         
         const client = await pool.connect();
         try {
-            // --- Data Integrity Logic ---
             const reportingTimezone = 'America/Los_Angeles';
             const nowInPST = new Date(new Date().toLocaleString('en-US', { timeZone: reportingTimezone }));
             const reportCutoffDate = new Date(nowInPST);
@@ -105,9 +104,53 @@ const databaseTool = new DynamicTool({
     },
 });
 
+const searchTermTool = new DynamicTool({
+    name: "get_search_term_performance_details",
+    description: "Gets a list of individual search terms with their performance metrics (spend, sales, orders, clicks) for a specific ASIN. Use this specifically when the user asks for a 'SEARCH_TERM_AUTOMATION' rule, as it provides the necessary detail for negation or harvesting strategies. Requires `asin`, `startDate`, and `endDate`.",
+    func: async ({ asin, startDate, endDate }) => {
+        if (!asin || !startDate || !endDate) {
+            return "Error: Missing required parameters for search term details.";
+        }
+        const client = await pool.connect();
+        try {
+            const query = `
+                SELECT 
+                    customer_search_term,
+                    SUM(cost)::numeric as total_spend,
+                    SUM(sales_1d)::numeric as total_sales,
+                    SUM(purchases_1d)::bigint as total_orders,
+                    SUM(clicks)::bigint as total_clicks
+                FROM sponsored_products_search_term_report
+                WHERE asin = $1 AND report_date BETWEEN $2 AND $3
+                AND customer_search_term IS NOT NULL
+                GROUP BY customer_search_term
+                HAVING SUM(cost) > 0
+                ORDER BY total_spend DESC;
+            `;
+            const result = await client.query(query, [asin, startDate, endDate]);
+            if (result.rows.length === 0) {
+                return "No search term data found with spend for this ASIN in the date range. It's not possible to create a search term rule without this data.";
+            }
+            // Return top 50 by spend to give the agent enough data to analyze
+            const topTerms = result.rows.slice(0, 50).map(row => ({
+                searchTerm: row.customer_search_term,
+                spend: parseFloat(row.total_spend).toFixed(2),
+                sales: parseFloat(row.total_sales).toFixed(2),
+                orders: parseInt(row.total_orders),
+                clicks: parseInt(row.total_clicks),
+            }));
+            return JSON.stringify(topTerms);
+        } catch (e) {
+            return `Database query for search term details failed: ${e.message}.`;
+        } finally {
+            client.release();
+        }
+    }
+});
+
 const salesAndTrafficTool = new DynamicTool({
     name: "get_total_sales_and_traffic",
-    description: "Queries the database to get total business performance data (including organic sales) for a specific ASIN within a date range. Use this to understand the overall health of a product and to calculate metrics like TACOS (Total ACoS).",
+    description: "Queries the database to get total business performance data (including organic sales) for a specific ASIN within a date range. Use this to understand the overall health of a product and to calculate metrics like TACOS (Total ACoS). Requires `asin`, `startDate`, and `endDate` as input.",
     func: async ({ asin, startDate, endDate }) => {
         if (!asin || !startDate || !endDate) {
             return "Error: Missing required parameters. Please provide asin, startDate, and endDate.";
@@ -150,7 +193,7 @@ const salesAndTrafficTool = new DynamicTool({
 
 const profitCalculatorTool = new DynamicTool({
     name: "calculate_profit_metrics",
-    description: "Calculates profit, profit margin, and break-even ACoS based on product pricing and costs. Essential for setting profitability targets.",
+    description: "Calculates profit, profit margin, and break-even ACoS. This is essential for setting profitability targets. Requires `salePrice`, `productCost`, `fbaFee`, `referralFeePercent` as numeric inputs.",
     func: async ({ salePrice, productCost, fbaFee, referralFeePercent }) => {
         if (typeof salePrice !== 'number' || isNaN(salePrice) ||
             typeof productCost !== 'number' || isNaN(productCost) ||
@@ -188,7 +231,7 @@ const launchPlanTool = new DynamicTool({
 });
 
 
-const tools = [databaseTool, salesAndTrafficTool, profitCalculatorTool, launchPlanTool];
+const tools = [asinPerformanceSummaryTool, searchTermTool, salesAndTrafficTool, profitCalculatorTool, launchPlanTool];
 
 // --- Agent Initialization ---
 const llm = new ChatGoogleGenerativeAI({
@@ -277,8 +320,10 @@ router.post('/ai/suggest-rule', async (req, res) => {
             My goal is to optimize for profitability.
             
             Follow these steps:
-            1. Use the 'calculate_profit_metrics' tool with the provided product_cost_structure to find the profit margin and break-even ACoS.
-            2. Use the 'get_product_performance' tool with the provided asin and date_range to get the historical advertising performance data.
+            1. Use the 'calculate_profit_metrics' tool with the provided product_cost_structure to find the profit margin and break-even ACoS. This is a critical first step for any profitability analysis.
+            2. **Crucially, select the correct data-gathering tool based on the requested ruleType:**
+                - If the ruleType is 'SEARCH_TERM_AUTOMATION', you MUST use the 'get_search_term_performance_details' tool to get data on individual search terms. This is non-negotiable as you need details to make a good negation rule.
+                - If the ruleType is 'BID_ADJUSTMENT' or 'BUDGET_ACCELERATION', use the 'get_asin_performance_summary' tool to get overall performance summaries.
             3. Analyze all the data you have gathered.
             4. Formulate a single, specific, and actionable automation rule of the type "${ruleType}". The rule must include a name, conditions, and actions.
             5. Provide a clear reasoning for why you are suggesting this specific rule.
