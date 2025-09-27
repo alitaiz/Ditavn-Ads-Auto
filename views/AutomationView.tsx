@@ -2,6 +2,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { AutomationRule, AutomationRuleCondition, AutomationConditionGroup, AutomationRuleAction } from '../types';
 import { RuleGuideContent } from './components/RuleGuideContent';
+import { AIRuleSuggester } from './components/AIRuleSuggester';
 
 const styles: { [key: string]: React.CSSProperties } = {
   container: { maxWidth: '1200px', margin: '0 auto', padding: '20px' },
@@ -151,6 +152,7 @@ const TABS = [
     { id: 'SEARCH_TERM_AUTOMATION', label: 'SP Search Term', type: 'SEARCH_TERM_AUTOMATION', adType: 'SP' },
     { id: 'BUDGET_ACCELERATION', label: 'SP Budget', type: 'BUDGET_ACCELERATION', adType: 'SP' },
     { id: 'PRICE_ADJUSTMENT', label: 'Change Price', type: 'PRICE_ADJUSTMENT' },
+    { id: 'AI_ASSISTANT', label: 'AI Assistant' },
     { id: 'HISTORY', label: 'History' },
     { id: 'GUIDE', label: 'Guide' },
 ];
@@ -191,7 +193,7 @@ export function AutomationView() {
   
   const handleOpenModal = (rule: AutomationRule | null = null) => {
     const activeTabInfo = TABS.find(t => t.id === activeTabId);
-    if (!activeTabInfo || !activeTabInfo.type) return;
+    if (!activeTabInfo || !('type' in activeTabInfo) || !activeTabInfo.type) return;
 
     if (rule) {
         setEditingRule(rule);
@@ -294,12 +296,13 @@ export function AutomationView() {
 
       {activeTabId === 'HISTORY' && <LogsTab logs={logs} loading={loading.logs} />}
       {activeTabId === 'GUIDE' && <RuleGuideContent />}
+      {activeTabId === 'AI_ASSISTANT' && <AIRuleSuggester />}
       {activeTab && 'type' in activeTab && activeTab.type && <RulesList rules={filteredRules} onEdit={handleOpenModal} onDelete={handleDeleteRule} onDuplicate={handleDuplicateRule} />}
       
       {isModalOpen && activeTab && 'type' in activeTab && activeTab.type && (
           <RuleBuilderModal 
               rule={editingRule} 
-              modalTitle={editingRule ? `Edit ${activeTab.label} Rule` : `Create New ${activeTab.label} Rule`}
+              modalTitle={editingRule?.id ? `Edit ${activeTab.label} Rule` : `Create New ${activeTab.label} Rule`}
               onClose={() => setIsModalOpen(false)}
               onSave={handleSaveRule}
           />
