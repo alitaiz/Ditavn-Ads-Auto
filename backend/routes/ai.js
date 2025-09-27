@@ -202,6 +202,7 @@ const agentConfig = { recursionLimit: 50 };
 // --- Route Handlers ---
 
 router.post('/ai/suggest-rule', async (req, res) => {
+    console.log(`[AI Agent] Received new suggest-rule request. isNewProduct: ${req.body.isNewProduct}`);
     const { isNewProduct, productData, ruleType, dateRange } = req.body;
     
     res.setHeader('Content-Type', 'text/event-stream');

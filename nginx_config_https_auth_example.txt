@@ -35,6 +35,10 @@ server {
     # Endpoint này vẫn được bảo vệ bởi một API key bí mật trong backend Node.js.
     # 'location =' tạo một khối ưu tiên cao nhất cho đường dẫn chính xác này.
     location = /api/stream-ingest {
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 75s;
+        
         proxy_pass http://localhost:4003;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -52,6 +56,11 @@ server {
         auth_basic "Restricted Content";
         auth_basic_user_file /etc/nginx/.htpasswd-ditavn.tababyco.com;
         # ------------------------------------
+        
+        # Tăng thời gian chờ để xử lý các yêu cầu AI chạy lâu
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 75s;
         
         proxy_pass http://localhost:4003;
         proxy_http_version 1.1;
