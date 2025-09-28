@@ -1,5 +1,6 @@
 // views/AutomationView.tsx
-import React, { useEffect, useState, useCallback } from 'react';
+// FIX: Import useState, useCallback, and useEffect from React to fix "Cannot find name" errors, and correct the syntax of the import.
+import React, { useState, useCallback, useEffect } from 'react';
 import { AutomationRule, AutomationRuleCondition, AutomationConditionGroup, AutomationRuleAction } from '../types';
 import { RuleGuideContent } from './components/RuleGuideContent';
 
@@ -58,8 +59,8 @@ const getDefaultCondition = (): AutomationRuleCondition => ({
 });
 
 const getDefaultBidAdjustmentAction = (): AutomationRuleAction => ({ 
-    type: 'adjustBidPercent', 
-    value: -1,
+    type: 'decreaseBidPercent', 
+    value: 10,
     minBid: undefined,
     maxBid: undefined,
 });
@@ -415,6 +416,44 @@ const RuleBuilderModal = ({ rule, modalTitle, onClose, onSave }: { rule: Automat
         return {};
     });
 
+    useEffect(() => {
+        // This effect runs once when the component mounts with a rule
+        // to normalize old 'adjustBidPercent' actions for a better UX.
+        if (formData.config?.conditionGroups) {
+            let needsUpdate = false;
+            const newGroups = formData.config.conditionGroups.map(group => {
+                if (group.action.type === 'adjustBidPercent') {
+                    needsUpdate = true;
+                    const value = group.action.value || 0;
+                    // FIX: Explicitly create a new action object with the correct type.
+                    // This prevents TypeScript from widening the `type` property to a generic `string`,
+                    // ensuring it conforms to the `AutomationRuleAction` interface.
+                    const newAction: AutomationRuleAction = {
+                        ...group.action,
+                        type: value >= 0 ? 'increaseBidPercent' : 'decreaseBidPercent',
+                        value: Math.abs(value),
+                    };
+                    return {
+                        ...group,
+                        action: newAction
+                    };
+                }
+                return group;
+            });
+
+            if (needsUpdate) {
+                setFormData(prev => ({
+                    ...prev,
+                    config: {
+                        ...prev.config!,
+                        conditionGroups: newGroups,
+                    }
+                }));
+            }
+        }
+    }, []); // Empty dependency array means it runs once on mount
+
+
     if (!formData || !formData.config) {
         return null;
     }
@@ -615,12 +654,15 @@ const RuleBuilderModal = ({ rule, modalTitle, onClose, onSave }: { rule: Automat
                                                         <div style={styles.formGroup}>
                                                             <label style={styles.label}>Action</label>
                                                             <select style={styles.conditionInput} value={group.action.type} onChange={e => handleActionChange(groupIndex, 'type', e.target.value)}>
-                                                                <option value="adjustBidPercent">Adjust Bid By %</option>
+                                                                <option value="decreaseBidPercent">Decrease Bid By %</option>
+                                                                <option value="increaseBidPercent">Increase Bid By %</option>
+                                                                <option value="decreaseBidAmount">Decrease Bid By $</option>
+                                                                <option value="increaseBidAmount">Increase Bid By $</option>
                                                             </select>
                                                         </div>
                                                         <div style={styles.formGroup}>
-                                                            <label style={styles.label}>Value (%)</label>
-                                                            <input type="number" style={styles.conditionInput} placeholder="e.g., -10" value={group.action.value ?? ''} onChange={e => handleActionChange(groupIndex, 'value', Number(e.target.value))} />
+                                                            <label style={styles.label}>{`Value ${group.action.type?.includes('Percent') ? '(%)' : '($)'}`}</label>
+                                                            <input type="number" step="0.01" min="0" style={styles.conditionInput} placeholder={group.action.type?.includes('Percent') ? "e.g., 10" : "e.g., 0.25"} value={group.action.value ?? ''} onChange={e => handleActionChange(groupIndex, 'value', Number(e.target.value))} />
                                                         </div>
                                                         <div style={styles.formGroup}>
                                                             <label style={styles.label}>Min Bid (Optional)</label>

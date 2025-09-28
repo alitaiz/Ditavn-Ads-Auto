@@ -81,7 +81,7 @@ export interface AutomationRuleCondition {
 }
 
 export interface AutomationRuleAction {
-    type: 'adjustBidPercent' | 'negateSearchTerm' | 'increaseBudgetPercent' | 'setBudgetAmount';
+    type: 'adjustBidPercent' | 'increaseBidPercent' | 'decreaseBidPercent' | 'increaseBidAmount' | 'decreaseBidAmount' | 'negateSearchTerm' | 'increaseBudgetPercent' | 'setBudgetAmount';
     value?: number;
     matchType?: 'NEGATIVE_EXACT' | 'NEGATIVE_PHRASE';
     minBid?: number;
@@ -248,6 +248,7 @@ export interface AICopilotCache {
     chat: {
         conversationId: string | null;
         messages: ChatMessage[];
+        systemInstruction: string;
     };
 }
 

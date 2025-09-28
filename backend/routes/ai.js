@@ -9,27 +9,6 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const conversations = new Map(); // In-memory store for conversation history
 
-const getSystemInstruction = () => `You are an expert Amazon PPC Analyst named "Co-Pilot". Your goal is to help users analyze performance data and provide strategic advice.
-
-You will be provided with several pieces of data:
-1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage. This is for profitability calculations.
-2.  **Performance Data:** This is a JSON object containing up to three data sets. Understand their differences:
-
-    *   **Search Term Report Data:** This is HISTORICAL, AGGREGATED data from official reports. It has a **2-day reporting delay**. Use this for long-term trend analysis, identifying high-performing customer search terms, and finding irrelevant terms to negate.
-
-    *   **Stream Data:** This is NEAR REAL-TIME, AGGREGATED data. It is very recent and good for understanding performance for **"yesterday" or "today"**.
-
-    *   **Sales & Traffic Data:** This includes ORGANIC metrics. Use this to understand the overall health of the product, like total sessions and unit session percentage (conversion rate).
-
-**CRITICAL INSTRUCTION:** Do NOT simply add the metrics (spend, sales, clicks) from the Search Term Report and the Stream Data together. They represent different timeframes and data sources. Use them contextually. For example, if asked about "top search terms last month," use the Search Term Report. If asked about "performance yesterday," use the Stream Data.
-
-Your Task:
-1.  **Acknowledge the data provided.** Note the date ranges for each dataset. If some data is missing, mention it.
-2.  Answer the user's question based on the distinct data sources.
-3.  Present your analysis clearly, using formatting like lists and bold text.
-4.  If you suggest an automation rule, provide the JSON for it in a markdown code block.
-5.  Remember the context of the data for follow-up questions.`;
-
 // --- Tool Endpoints (for Frontend to pre-load data) ---
 
 router.post('/ai/tool/search-term', async (req, res) => {
@@ -192,6 +171,8 @@ router.post('/ai/chat', async (req, res) => {
             throw new Error('Question is required.');
         }
 
+        const systemInstruction = context.systemInstruction || 'You are an expert Amazon PPC Analyst.';
+
         let history = [];
         if (conversationId && conversations.has(conversationId)) {
             history = conversations.get(conversationId);
@@ -203,7 +184,7 @@ router.post('/ai/chat', async (req, res) => {
             model: 'gemini-2.5-flash',
             history: history,
             config: {
-                systemInstruction: getSystemInstruction()
+                systemInstruction: systemInstruction
             }
         });
         

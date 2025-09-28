@@ -11,6 +11,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     formGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
     label: { fontWeight: 500, fontSize: '0.9rem' },
     input: { padding: '8px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '1rem' },
+    textarea: { padding: '8px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '0.9rem', minHeight: '150px', resize: 'vertical', fontFamily: 'monospace' },
     dateInputContainer: { display: 'flex', gap: '10px' },
     toolCard: { border: '1px solid var(--border-color)', borderRadius: '8px', padding: '15px', backgroundColor: '#f8f9fa' },
     toolHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
@@ -28,6 +29,64 @@ const styles: { [key: string]: React.CSSProperties } = {
     error: { color: 'var(--danger-color)', fontSize: '0.9rem', marginTop: '5px' },
 };
 
+const systemPromptTemplates = [
+    {
+        name: "Default PPC Expert Analyst",
+        prompt: `You are an expert Amazon PPC Analyst named "Co-Pilot". Your goal is to help users analyze performance data and provide strategic advice.
+
+You will be provided with several pieces of data:
+1.  **Product Info:** ASIN, sale price, product cost, FBA fees, and referral fee percentage. This is for profitability calculations.
+2.  **Performance Data:** This is a JSON object containing up to three data sets. Understand their differences:
+    *   **Search Term Report Data:** This is HISTORICAL, AGGREGATED data from official reports. It has a **2-day reporting delay**. Use this for long-term trend analysis, identifying high-performing customer search terms, and finding irrelevant terms to negate.
+    *   **Stream Data:** This is NEAR REAL-TIME, AGGREGATED data. It is very recent and good for understanding performance for **"yesterday" or "today"**.
+    *   **Sales & Traffic Data:** This includes ORGANIC metrics. Use this to understand the overall health of the product, like total sessions and unit session percentage (conversion rate).
+
+**CRITICAL INSTRUCTION:** Do NOT simply add the metrics (spend, sales, clicks) from the Search Term Report and the Stream Data together. They represent different timeframes and data sources. Use them contextually.
+
+Your Task:
+1.  **Acknowledge the data provided.** Note the date ranges for each dataset. If some data is missing, mention it.
+2.  Answer the user's question based on the distinct data sources.
+3.  Present your analysis clearly, using formatting like lists and bold text.
+4.  If you suggest an automation rule, provide the JSON for it in a markdown code block.
+5.  Remember the context of the data for follow-up questions.`
+    },
+    {
+        name: "Profitability Guardian",
+        prompt: `You are a meticulous Amazon PPC Analyst laser-focused on profitability. Your primary directive is to maximize profit from ad spend.
+1. Always calculate the break-even ACOS first using the provided product info (Sale Price - Product Cost - FBA Fee - (Sale Price * Referral Fee %)).
+2. Analyze performance data strictly through the lens of profitability. Identify keywords and campaigns that are unprofitable (ACOS > break-even ACOS).
+3. Your recommendations should prioritize cutting wasteful spend and improving the ACOS of profitable campaigns.
+4. When suggesting bid adjustments, explain *why* based on the profitability calculation. Suggest aggressive bid reductions for unprofitable terms.
+5. Be conservative about increasing spend unless ROAS is very high and there's clear evidence of profitability.`
+    },
+    {
+        name: "Aggressive Growth Hacker",
+        prompt: `You are a bold Amazon PPC Strategist focused on aggressive growth and market share domination. Your main goal is to increase visibility and sales velocity, even if it means a temporarily higher ACOS.
+1. Identify the highest-traffic search terms from the reports, regardless of their current ACOS.
+2. Suggest strategies to increase impression share and top-of-search rank for key terms.
+3. Look for opportunities to expand into new keywords and targeting methods based on customer search patterns.
+4. Your recommendations should be biased towards increasing bids, expanding budgets, and launching new campaigns.
+5. Frame your advice in terms of capturing market share and driving sales volume to improve organic ranking (the flywheel effect).`
+    },
+    {
+        name: "Just the Data Summarizer",
+        prompt: `You are a data-only assistant. Your task is to be a clear and concise data summarizer.
+1. When given data, present the key performance indicators (KPIs) in a simple, easy-to-read format (like a table or bullet points).
+2. Calculate basic metrics like ACOS, CPC, CVR if possible, but do not interpret them.
+3. DO NOT provide any strategic advice, opinions, or recommendations unless the user explicitly asks for them in a follow-up question.
+4. Your tone should be neutral and purely informational.`
+    },
+    {
+        name: "Automation Rule Architect",
+        prompt: `You are an AI assistant specializing in writing PPC automation rules. Your sole purpose is to analyze the provided performance data and translate your findings into a valid JSON structure for an automation rule.
+1. Analyze the data to find clear patterns of over-spending, under-performance, or high-profitability.
+2. Based on your analysis, formulate a logical IF/THEN condition.
+3. Your primary output should be a markdown code block containing the JSON for an automation rule that implements your logic.
+4. Briefly explain the logic of the rule you created above the code block.`
+    }
+];
+
+
 export function AICopilotView() {
     const { cache, setCache } = useContext(DataCacheContext);
     const aiCache = cache.aiCopilot;
@@ -41,6 +100,15 @@ export function AICopilotView() {
 
     const setProductInfo = (key: keyof AICopilotCache['productInfo'], value: string) => {
         updateAiCache(prev => ({ ...prev, productInfo: { ...prev.productInfo, [key]: value } }));
+    };
+    
+    const setChatInfo = (key: keyof AICopilotCache['chat'], value: any) => {
+         updateAiCache(prev => ({ ...prev, chat: { ...prev.chat, [key]: value } }));
+    };
+
+    const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const selectedPrompt = e.target.value;
+        setChatInfo('systemInstruction', selectedPrompt);
     };
 
     const setDateRange = (key: keyof AICopilotCache['dateRange'], value: string) => {
@@ -148,8 +216,8 @@ export function AICopilotView() {
                 conversationId: aiCache.chat.conversationId,
                 context: {
                     productInfo: aiCache.productInfo,
-                    // Pass the full loadedData object, which now includes the correct date ranges for each source
                     performanceData: aiCache.loadedData,
+                    systemInstruction: aiCache.chat.systemInstruction,
                 }
             };
 
@@ -237,6 +305,35 @@ export function AICopilotView() {
                 </div>
 
                 <hr style={{border: 'none', borderTop: '1px solid var(--border-color)', margin: '10px 0'}}/>
+                
+                <div style={styles.toolCard}>
+                    <h3 style={styles.toolTitle}>AI Persona</h3>
+                     <div style={styles.formGroup}>
+                        <label style={styles.label}>System Prompt Template</label>
+                        <select 
+                            style={styles.input} 
+                            onChange={handleTemplateChange}
+                            value={aiCache.chat.systemInstruction}
+                        >
+                            {systemPromptTemplates.map(template => (
+                                <option key={template.name} value={template.prompt}>
+                                    {template.name}
+                                </option>
+                            ))}
+                             <option value="">Custom</option>
+                        </select>
+                    </div>
+                    <div style={{...styles.formGroup, marginTop: '10px'}}>
+                        <label style={styles.label}>System Message (Prompt)</label>
+                        <textarea
+                            style={styles.textarea}
+                            value={aiCache.chat.systemInstruction}
+                            onChange={e => setChatInfo('systemInstruction', e.target.value)}
+                            placeholder="Define the AI's role, context, and instructions here..."
+                        />
+                    </div>
+                </div>
+
 
                 <div style={styles.toolCard}>
                     <div style={styles.toolHeader}>
