@@ -146,55 +146,40 @@ router.post('/ai/tool/sales-traffic', async (req, res) => {
     try {
         const query = `
             SELECT
-                -- Key Traffic Metrics (SUMs)
+                -- Traffic Metrics (SUMs)
                 SUM(COALESCE((traffic_data->>'sessions')::integer, 0)) AS total_sessions,
                 SUM(COALESCE((traffic_data->>'pageViews')::integer, 0)) AS total_page_views,
                 SUM(COALESCE((traffic_data->>'sessionsB2B')::integer, 0)) AS total_sessions_b2b,
+                SUM(COALESCE((traffic_data->>'pageViewsB2B')::integer, 0)) AS total_page_views_b2b,
                 SUM(COALESCE((traffic_data->>'browserSessions')::integer, 0)) AS total_browser_sessions,
+                SUM(COALESCE((traffic_data->>'browserPageViews')::integer, 0)) AS total_browser_page_views,
                 SUM(COALESCE((traffic_data->>'mobileAppSessions')::integer, 0)) AS total_mobile_app_sessions,
+                SUM(COALESCE((traffic_data->>'mobileAppPageViews')::integer, 0)) AS total_mobile_app_page_views,
+                SUM(COALESCE((traffic_data->>'browserSessionsB2B')::integer, 0)) AS total_browser_sessions_b2b,
+                SUM(COALESCE((traffic_data->>'browserPageViewsB2B')::integer, 0)) AS total_browser_page_views_b2b,
+                SUM(COALESCE((traffic_data->>'mobileAppSessionsB2B')::integer, 0)) AS total_mobile_app_sessions_b2b,
+                SUM(COALESCE((traffic_data->>'mobileAppPageViewsB2B')::integer, 0)) AS total_mobile_app_page_views_b2b,
 
-                -- Key Sales Metrics (SUMs)
+                -- Sales Metrics (SUMs)
                 SUM(COALESCE((sales_data->>'unitsOrdered')::integer, 0)) AS total_units_ordered,
                 SUM(COALESCE((sales_data->>'unitsOrderedB2B')::integer, 0)) AS total_units_ordered_b2b,
                 SUM(COALESCE((sales_data->'orderedProductSales'->>'amount')::numeric, 0.0)) AS total_ordered_product_sales,
+                SUM(COALESCE((sales_data->'orderedProductSalesB2B'->>'amount')::numeric, 0.0)) AS total_ordered_product_sales_b2b,
                 SUM(COALESCE((sales_data->>'totalOrderItems')::integer, 0)) AS total_order_items,
+                SUM(COALESCE((sales_data->>'totalOrderItemsB2B')::integer, 0)) AS total_order_items_b2b,
 
-                -- Key Calculated & Averaged Metrics
-                -- Weighted average for Buy Box Percentage, rounded to 2 decimal places.
-                ROUND(
-                    COALESCE(
-                        SUM(COALESCE((traffic_data->>'sessions')::numeric, 0) * COALESCE((traffic_data->>'buyBoxPercentage')::numeric, 0)) / 
-                        NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0),
-                        0.0
-                    ), 2
-                ) AS avg_buy_box_percentage,
-
-                -- More accurate, aggregated conversion rate (Unit Session Percentage), rounded to 4 decimal places.
-                ROUND(
-                    COALESCE(
-                        SUM(COALESCE((sales_data->>'unitsOrdered')::numeric, 0)) / 
-                        NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0),
-                        0.0
-                    ), 4
-                ) AS overall_unit_session_percentage,
-
-                -- B2B conversion rate, rounded to 4 decimal places.
-                ROUND(
-                    COALESCE(
-                        SUM(COALESCE((sales_data->>'unitsOrderedB2B')::numeric, 0)) / 
-                        NULLIF(SUM(COALESCE((traffic_data->>'sessionsB2B')::numeric, 0)), 0),
-                        0.0
-                    ), 4
-                ) AS overall_unit_session_percentage_b2b,
-
-                -- AOV (Average Order Value), rounded to 2 decimal places.
-                ROUND(
-                    COALESCE(
-                        SUM(COALESCE((sales_data->'orderedProductSales'->>'amount')::numeric, 0.0)) /
-                        NULLIF(SUM(COALESCE((sales_data->>'totalOrderItems')::integer, 0)), 0),
-                        0.0
-                    ), 2
-                ) AS avg_sales_per_order_item
+                -- Weighted Average Percentages & Calculated Rates
+                -- Buy Box Percentage
+                ROUND(COALESCE(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0) * COALESCE((traffic_data->>'buyBoxPercentage')::numeric, 0)) / NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0), 0.0), 2) AS avg_buy_box_percentage,
+                ROUND(COALESCE(SUM(COALESCE((traffic_data->>'sessionsB2B')::numeric, 0) * COALESCE((traffic_data->>'buyBoxPercentageB2B')::numeric, 0)) / NULLIF(SUM(COALESCE((traffic_data->>'sessionsB2B')::numeric, 0)), 0), 0.0), 2) AS avg_buy_box_percentage_b2b,
+                
+                -- Conversion Rate (as a percentage, e.g., 10.25)
+                ROUND(COALESCE(SUM(COALESCE((sales_data->>'unitsOrdered')::numeric, 0)) / NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0), 0.0) * 100, 2) AS overall_unit_session_percentage,
+                ROUND(COALESCE(SUM(COALESCE((sales_data->>'unitsOrderedB2B')::numeric, 0)) / NULLIF(SUM(COALESCE((traffic_data->>'sessionsB2B')::numeric, 0)), 0), 0.0) * 100, 2) AS overall_unit_session_percentage_b2b,
+                
+                -- AOV (Average Order Value)
+                ROUND(COALESCE(SUM(COALESCE((sales_data->'orderedProductSales'->>'amount')::numeric, 0.0)) / NULLIF(SUM(COALESCE((sales_data->>'totalOrderItems')::integer, 0)), 0), 0.0), 2) AS avg_sales_per_order_item,
+                ROUND(COALESCE(SUM(COALESCE((sales_data->'orderedProductSalesB2B'->>'amount')::numeric, 0.0)) / NULLIF(SUM(COALESCE((sales_data->>'totalOrderItemsB2B')::integer, 0)), 0), 0.0), 2) AS avg_sales_per_order_item_b2b
 
             FROM sales_and_traffic_by_asin
             WHERE child_asin = $1 AND report_date BETWEEN $2 AND $3;
