@@ -90,6 +90,16 @@ Your Task:
 export function AICopilotView() {
     const { cache, setCache } = useContext(DataCacheContext);
     const aiCache = cache.aiCopilot;
+    
+    // State to manage the dropdown selection independently
+    const [selectedTemplateName, setSelectedTemplateName] = useState('Default PPC Expert Analyst');
+
+    useEffect(() => {
+        // Sync dropdown with the actual system instruction from cache on load or change
+        const matchingTemplate = systemPromptTemplates.find(t => t.prompt === aiCache.chat.systemInstruction);
+        setSelectedTemplateName(matchingTemplate ? matchingTemplate.name : "Custom");
+    }, [aiCache.chat.systemInstruction]);
+
 
     const updateAiCache = (updater: (prev: AICopilotCache) => AICopilotCache) => {
         setCache(prevCache => ({
@@ -107,8 +117,14 @@ export function AICopilotView() {
     };
 
     const handleTemplateChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const selectedPrompt = e.target.value;
-        setChatInfo('systemInstruction', selectedPrompt);
+        const templateName = e.target.value;
+        setSelectedTemplateName(templateName);
+        if (templateName !== "Custom") {
+            const selectedTemplate = systemPromptTemplates.find(t => t.name === templateName);
+            if (selectedTemplate) {
+                setChatInfo('systemInstruction', selectedTemplate.prompt);
+            }
+        }
     };
 
     const setDateRange = (key: keyof AICopilotCache['dateRange'], value: string) => {
@@ -310,17 +326,17 @@ export function AICopilotView() {
                     <h3 style={styles.toolTitle}>AI Persona</h3>
                      <div style={styles.formGroup}>
                         <label style={styles.label}>System Prompt Template</label>
-                        <select 
-                            style={styles.input} 
+                        <select
+                            style={styles.input}
+                            value={selectedTemplateName}
                             onChange={handleTemplateChange}
-                            value={aiCache.chat.systemInstruction}
                         >
                             {systemPromptTemplates.map(template => (
-                                <option key={template.name} value={template.prompt}>
+                                <option key={template.name} value={template.name}>
                                     {template.name}
                                 </option>
                             ))}
-                             <option value="">Custom</option>
+                            <option value="Custom">Custom</option>
                         </select>
                     </div>
                     <div style={{...styles.formGroup, marginTop: '10px'}}>

@@ -145,9 +145,21 @@ router.post('/ai/tool/sales-traffic', async (req, res) => {
     }
     try {
         const query = `
-            SELECT 
-                SUM((traffic_data->>'sessions')::int) as total_sessions,
-                SUM((sales_data->>'unitsOrdered')::int) as total_units_ordered
+            SELECT
+                -- Traffic Metrics
+                COALESCE(SUM((traffic_data->>'sessions')::integer), 0) AS total_sessions,
+                COALESCE(SUM((traffic_data->>'pageViews')::integer), 0) AS total_page_views,
+                
+                -- Sales Metrics
+                COALESCE(SUM((sales_data->>'unitsOrdered')::integer), 0) AS total_units_ordered,
+                COALESCE(SUM((sales_data->'orderedProductSales'->>'amount')::numeric), 0.0) AS total_ordered_product_sales,
+                COALESCE(SUM((sales_data->>'totalOrderItems')::integer), 0) AS total_order_items,
+
+                -- Calculated & Averaged Metrics
+                COALESCE(AVG(NULLIF((traffic_data->>'featuredOfferPercentage')::numeric, 0)), 0.0) AS avg_featured_offer_percentage,
+                -- More accurate conversion rate calculation: total units / total sessions
+                COALESCE(SUM((sales_data->>'unitsOrdered')::integer)::numeric / NULLIF(SUM((traffic_data->>'sessions')::integer), 0), 0.0) as overall_unit_session_percentage
+
             FROM sales_and_traffic_by_asin
             WHERE child_asin = $1 AND report_date BETWEEN $2 AND $3;
         `;
