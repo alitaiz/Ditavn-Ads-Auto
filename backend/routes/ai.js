@@ -146,19 +146,55 @@ router.post('/ai/tool/sales-traffic', async (req, res) => {
     try {
         const query = `
             SELECT
-                -- Traffic Metrics
-                COALESCE(SUM((traffic_data->>'sessions')::integer), 0) AS total_sessions,
-                COALESCE(SUM((traffic_data->>'pageViews')::integer), 0) AS total_page_views,
-                
-                -- Sales Metrics
-                COALESCE(SUM((sales_data->>'unitsOrdered')::integer), 0) AS total_units_ordered,
-                COALESCE(SUM((sales_data->'orderedProductSales'->>'amount')::numeric), 0.0) AS total_ordered_product_sales,
-                COALESCE(SUM((sales_data->>'totalOrderItems')::integer), 0) AS total_order_items,
+                -- Key Traffic Metrics (SUMs)
+                SUM(COALESCE((traffic_data->>'sessions')::integer, 0)) AS total_sessions,
+                SUM(COALESCE((traffic_data->>'pageViews')::integer, 0)) AS total_page_views,
+                SUM(COALESCE((traffic_data->>'sessionsB2B')::integer, 0)) AS total_sessions_b2b,
+                SUM(COALESCE((traffic_data->>'browserSessions')::integer, 0)) AS total_browser_sessions,
+                SUM(COALESCE((traffic_data->>'mobileAppSessions')::integer, 0)) AS total_mobile_app_sessions,
 
-                -- Calculated & Averaged Metrics
-                COALESCE(AVG(NULLIF((traffic_data->>'featuredOfferPercentage')::numeric, 0)), 0.0) AS avg_featured_offer_percentage,
-                -- More accurate conversion rate calculation: total units / total sessions
-                COALESCE(SUM((sales_data->>'unitsOrdered')::integer)::numeric / NULLIF(SUM((traffic_data->>'sessions')::integer), 0), 0.0) as overall_unit_session_percentage
+                -- Key Sales Metrics (SUMs)
+                SUM(COALESCE((sales_data->>'unitsOrdered')::integer, 0)) AS total_units_ordered,
+                SUM(COALESCE((sales_data->>'unitsOrderedB2B')::integer, 0)) AS total_units_ordered_b2b,
+                SUM(COALESCE((sales_data->'orderedProductSales'->>'amount')::numeric, 0.0)) AS total_ordered_product_sales,
+                SUM(COALESCE((sales_data->>'totalOrderItems')::integer, 0)) AS total_order_items,
+
+                -- Key Calculated & Averaged Metrics
+                -- Weighted average for Buy Box Percentage, rounded to 2 decimal places.
+                ROUND(
+                    COALESCE(
+                        SUM(COALESCE((traffic_data->>'sessions')::numeric, 0) * COALESCE((traffic_data->>'buyBoxPercentage')::numeric, 0)) / 
+                        NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0),
+                        0.0
+                    ), 2
+                ) AS avg_buy_box_percentage,
+
+                -- More accurate, aggregated conversion rate (Unit Session Percentage), rounded to 4 decimal places.
+                ROUND(
+                    COALESCE(
+                        SUM(COALESCE((sales_data->>'unitsOrdered')::numeric, 0)) / 
+                        NULLIF(SUM(COALESCE((traffic_data->>'sessions')::numeric, 0)), 0),
+                        0.0
+                    ), 4
+                ) AS overall_unit_session_percentage,
+
+                -- B2B conversion rate, rounded to 4 decimal places.
+                ROUND(
+                    COALESCE(
+                        SUM(COALESCE((sales_data->>'unitsOrderedB2B')::numeric, 0)) / 
+                        NULLIF(SUM(COALESCE((traffic_data->>'sessionsB2B')::numeric, 0)), 0),
+                        0.0
+                    ), 4
+                ) AS overall_unit_session_percentage_b2b,
+
+                -- AOV (Average Order Value), rounded to 2 decimal places.
+                ROUND(
+                    COALESCE(
+                        SUM(COALESCE((sales_data->'orderedProductSales'->>'amount')::numeric, 0.0)) /
+                        NULLIF(SUM(COALESCE((sales_data->>'totalOrderItems')::integer, 0)), 0),
+                        0.0
+                    ), 2
+                ) AS avg_sales_per_order_item
 
             FROM sales_and_traffic_by_asin
             WHERE child_asin = $1 AND report_date BETWEEN $2 AND $3;
