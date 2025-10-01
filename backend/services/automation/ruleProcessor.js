@@ -1,7 +1,14 @@
 // backend/services/automation/ruleProcessor.js
 import pool from '../../db.js';
 import { getPerformanceData } from './dataFetcher.js';
-import { evaluateBidAdjustmentRule, evaluateSearchTermAutomationRule, evaluateBudgetAccelerationRule, evaluateSbSdBidAdjustmentRule, evaluatePriceAdjustmentRule } from './evaluators.js';
+import { 
+    evaluateBidAdjustmentRule, 
+    evaluateSearchTermAutomationRule, 
+    evaluateBudgetAccelerationRule, 
+    evaluateSbSdBidAdjustmentRule, 
+    evaluatePriceAdjustmentRule, 
+    evaluateSearchTermHarvestingRule 
+} from './evaluators/index.js';
 import { isRuleDue, logAction, getLocalDateString } from './utils.js';
 import { amazonAdsApiRequest } from '../../helpers/amazon-api.js';
 
@@ -53,6 +60,8 @@ const processRule = async (rule) => {
                 finalResult = await evaluateSearchTermAutomationRule(rule, performanceMap, throttledEntities);
             } else if (rule.rule_type === 'BUDGET_ACCELERATION') {
                 finalResult = await evaluateBudgetAccelerationRule(rule, performanceMap);
+            } else if (rule.rule_type === 'SEARCH_TERM_HARVESTING') {
+                finalResult = await evaluateSearchTermHarvestingRule(rule, performanceMap, throttledEntities);
             } else {
                 finalResult = { summary: 'Rule type not recognized.', details: { actions_by_campaign: {} }, actedOnEntities: [] };
             }
@@ -75,9 +84,13 @@ const processRule = async (rule) => {
             finalResult.details.data_date_range = dataDateRange;
         }
 
-        const totalChanges = Object.values(finalResult.details.actions_by_campaign || finalResult.details.changes || {}).length;
+        const totalCampaignActions = Object.values(finalResult.details.actions_by_campaign || {}).length > 0;
+        const hasPriceChanges = finalResult.details.changes && finalResult.details.changes.length > 0;
+        const hasHarvestActions = (finalResult.details.created || 0) > 0 || (finalResult.details.negated || 0) > 0;
+        
+        const actionWasTaken = totalCampaignActions || hasPriceChanges || hasHarvestActions;
 
-        if (totalChanges > 0 || (finalResult.details.changes && finalResult.details.changes.length > 0)) {
+        if (actionWasTaken) {
             await logAction(rule, 'SUCCESS', finalResult.summary, finalResult.details);
         } else {
             await logAction(rule, 'NO_ACTION', finalResult.summary || 'No entities met the rule criteria.', finalResult.details);
@@ -136,63 +149,85 @@ export const checkAndRunDueRules = async () => {
 
 export const resetBudgets = async () => {
     const todayStr = getLocalDateString(REPORTING_TIMEZONE);
-    console.log(`[BudgetReset]  resetting budgets for date: ${todayStr}`);
+    console.log(`[Budget Reset] 🌙 Running daily budget reset for ${todayStr}.`);
 
+    let client;
     try {
-        const { rows: budgetsToReset } = await pool.query(
-            `SELECT * FROM daily_budget_overrides WHERE override_date = $1 AND reverted_at IS NULL`,
+        client = await pool.connect();
+        
+        // Find campaigns that had their budget overridden today and haven't been reverted yet.
+        // Join with automation_rules to get the profile_id needed for the API call.
+        const { rows: overrides } = await client.query(
+            `SELECT d.id, d.campaign_id, d.original_budget, r.profile_id 
+             FROM daily_budget_overrides d
+             JOIN automation_rules r ON d.rule_id = r.id
+             WHERE d.override_date = $1 AND d.reverted_at IS NULL AND r.profile_id IS NOT NULL`,
             [todayStr]
         );
 
-        if (budgetsToReset.length === 0) {
-            console.log('[BudgetReset] No budgets to reset today.');
+        if (overrides.length === 0) {
+            console.log('[Budget Reset] No budgets to reset today.');
             return;
         }
 
-        console.log(`[BudgetReset] Found ${budgetsToReset.length} campaign budget(s) to reset.`);
+        console.log(`[Budget Reset] Found ${overrides.length} campaign(s) to reset.`);
 
-        // Find the profileId from the first active rule. This is acceptable
-        // because all rules within one app instance currently share the same profile.
-        const profileResult = await pool.query(
-            `SELECT profile_id FROM automation_rules WHERE is_active = TRUE LIMIT 1`
-        );
-        if (profileResult.rows.length === 0) {
-            console.error('[BudgetReset] Cannot reset budgets: No active rules found to determine profile ID.');
-            return;
-        }
-        const profileId = profileResult.rows[0].profile_id;
-
-        const updates = budgetsToReset.map(row => ({
-            campaignId: String(row.campaign_id),
-            // The API expects the budget amount inside a nested 'budget' object for SP campaigns.
-            budget: {
-                budget: parseFloat(row.original_budget),
-                budgetType: 'DAILY'
+        // Group by profile ID since API calls are profile-specific
+        const updatesByProfile = overrides.reduce((acc, override) => {
+            if (!acc[override.profile_id]) {
+                acc[override.profile_id] = [];
             }
-        }));
+            acc[override.profile_id].push({
+                campaignId: String(override.campaign_id), // API expects string IDs
+                budget: { budget: parseFloat(override.original_budget), budgetType: 'DAILY' }
+            });
+            return acc;
+        }, {});
 
-        await amazonAdsApiRequest({
-            method: 'put',
-            url: '/sp/campaigns',
-            profileId,
-            data: { campaigns: updates },
-            headers: {
-                'Content-Type': 'application/vnd.spCampaign.v3+json',
-                'Accept': 'application/vnd.spCampaign.v3+json'
-            },
-        });
+        const successfulResets = [];
 
-        console.log(`[BudgetReset] Successfully sent API request to reset ${updates.length} budgets.`);
+        for (const profileId in updatesByProfile) {
+            const updates = updatesByProfile[profileId];
+            try {
+                const response = await amazonAdsApiRequest({
+                    method: 'put',
+                    url: '/sp/campaigns',
+                    profileId: profileId,
+                    data: { campaigns: updates },
+                    headers: {
+                        'Content-Type': 'application/vnd.spCampaign.v3+json',
+                        'Accept': 'application/vnd.spCampaign.v3+json'
+                    },
+                });
 
-        const campaignIdsReset = budgetsToReset.map(row => row.campaign_id);
-        await pool.query(
-            `UPDATE daily_budget_overrides SET reverted_at = NOW() WHERE campaign_id = ANY($1::bigint[]) AND override_date = $2`,
-            [campaignIdsReset, todayStr]
-        );
-        
-        console.log(`[BudgetReset] Database updated to mark budgets as reverted.`);
+                // Check response for successful updates
+                if (response.campaigns && Array.isArray(response.campaigns.success)) {
+                    response.campaigns.success.forEach(result => {
+                        successfulResets.push(result.campaignId);
+                    });
+                }
+                if (response.campaigns && Array.isArray(response.campaigns.error)) {
+                     response.campaigns.error.forEach(result => {
+                        console.error(`[Budget Reset] Failed to reset budget for campaign ${result.campaignId}. Reason: ${result.errors?.[0]?.errorValue?.message || 'Unknown API error'}`);
+                    });
+                }
+            } catch (error) {
+                console.error(`[Budget Reset] API call failed for profile ${profileId}.`, error.details || error);
+            }
+        }
+
+        // Update the database for successfully reset campaigns
+        if (successfulResets.length > 0) {
+            await client.query(
+                `UPDATE daily_budget_overrides SET reverted_at = NOW() WHERE campaign_id = ANY($1::bigint[]) AND override_date = $2`,
+                [successfulResets, todayStr]
+            );
+            console.log(`[Budget Reset] Successfully reset budgets for ${successfulResets.length} campaign(s).`);
+        }
 
     } catch (error) {
-        console.error('[BudgetReset] CRITICAL ERROR during budget reset process:', error.details || error.message);
+        console.error('[Budget Reset] A critical error occurred during the budget reset process:', error);
+    } finally {
+        if (client) client.release();
     }
 };

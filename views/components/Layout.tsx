@@ -62,6 +62,9 @@ export function Layout() {
                     <NavLink to="/campaigns" style={getNavLinkStyle}>
                         PPC Management
                     </NavLink>
+                     <NavLink to="/query-performance" style={getNavLinkStyle}>
+                        Search Query Performance
+                    </NavLink>
                     <NavLink to="/sp-search-terms" style={getNavLinkStyle}>
                         Search Terms Report
                     </NavLink>
@@ -76,6 +79,9 @@ export function Layout() {
                     </NavLink>
                     <NavLink to="/ai-copilot" style={getNavLinkStyle}>
                         AI Co-Pilot
+                    </NavLink>
+                    <NavLink to="/listings" style={getNavLinkStyle}>
+                        Listing
                     </NavLink>
                 </nav>
             </header>

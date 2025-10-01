@@ -10,7 +10,11 @@ import ppcManagementRoutes from './routes/ppcManagement.js';
 import salesAndTrafficRoutes from './routes/salesAndTraffic.js';
 import databaseRoutes from './routes/database.js'; // Replaced eventsRoutes
 import automationRoutes from './routes/automation.js';
-import aiRoutes from './routes/ai.js'; // Import the new AI router
+import aiRoutes from './routes/ai.js';
+import aiConversationRoutes from './routes/aiConversations.js'; // New route for chat history
+import queryPerformanceRoutes from './routes/queryPerformance.js';
+import productDetailsRoutes from './routes/productDetails.js';
+import listingsRoutes from './routes/listings.js';
 import { startRulesEngine } from './services/rulesEngine.js';
 
 const app = express();
@@ -19,8 +23,8 @@ const port = process.env.PORT || 4003;
 // --- Middlewares ---
 // Enable Cross-Origin Resource Sharing for all routes
 app.use(cors());
-// Enable parsing of JSON request bodies
-app.use(express.json());
+// Enable parsing of JSON request bodies with an increased limit to prevent "PayloadTooLargeError"
+app.use(express.json({ limit: '50mb' }));
 
 // --- API Routes ---
 // Mount the various API routers to their respective base paths.
@@ -32,7 +36,12 @@ app.use('/api', ppcManagementRoutes);
 app.use('/api', salesAndTrafficRoutes);
 app.use('/api', databaseRoutes); // Use the new database router
 app.use('/api', automationRoutes);
-app.use('/api', aiRoutes); // Mount the new AI router
+app.use('/api', aiRoutes);
+app.use('/api/ai/conversations', aiConversationRoutes); // Mount the new conversation routes
+app.use('/api', queryPerformanceRoutes);
+app.use('/api', productDetailsRoutes);
+app.use('/api', listingsRoutes);
+
 
 // --- Root Endpoint for health checks ---
 app.get('/', (req, res) => {

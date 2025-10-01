@@ -1,5 +1,5 @@
 {
-  "name": "ditavn-ads-auto",
+  "name": "ads-auto",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -14,19 +14,18 @@
     "request:sb-search-terms": "node scripts/3.request_sb_search_term_reports.js",
     "request:sd-targeting": "node scripts/4.request_sd_targeting_reports.js",
     "process:pending-reports": "node scripts/2.process_pending_reports.js",
-    "fetch:sales-traffic": "node scripts/fetch_sales_and_traffic.js"
+    "fetch:sales-traffic": "node scripts/fetch_sales_and_traffic.js",
+    "fetch:query-performance": "node scripts/fetch_query_performance.js"
   },
   "dependencies": {
     "@google/genai": "^1.19.0",
-    "@langchain/core": "^0.3.77",
-    "@langchain/google-genai": "^0.2.18",
-    "@langchain/langgraph": "^0.4.9",
     "axios": "^1.11.0",
     "chart.js": "^4.5.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "node-cron": "^3.0.3",
+    "openai": "^4.52.7",
     "path": "^0.12.7",
     "pg": "^8.16.3",
     "react": "^19.1.1",

@@ -1,6 +1,7 @@
 // backend/helpers/spApiHelper.js
 import axios from 'axios';
 import { URLSearchParams } from 'url';
+import pool from '../db.js';
 
 const LWA_TOKEN_URL = 'https://api.amazon.com/auth/o2/token';
 const SP_API_ENDPOINT = 'https://sellingpartnerapi-na.amazon.com';
@@ -52,7 +53,7 @@ export async function getSpApiAccessToken() {
 /**
  * A wrapper for making authenticated requests to the SP-API.
  */
-async function spApiRequest({ method, url, data, params }) {
+export async function spApiRequest({ method, url, data, params }) {
     const accessToken = await getSpApiAccessToken();
     try {
         const response = await axios({
@@ -71,6 +72,76 @@ async function spApiRequest({ method, url, data, params }) {
         throw new Error(JSON.stringify(error.response?.data?.errors || { message: 'SP-API request failed.' }));
     }
 }
+
+/**
+ * Retrieves the Seller SKU for a given ASIN by first checking the local database,
+ * then falling back to the Listings Items API.
+ * @param {string} asin The ASIN of the product.
+ * @returns {Promise<string|null>} The SKU, or null if not found.
+ */
+export async function getSkuByAsin(asin) {
+    // 1. Try fetching from the local database first.
+    try {
+        const { rows } = await pool.query(
+            'SELECT sku FROM product_listings WHERE asin = $1',
+            [asin]
+        );
+        if (rows.length > 0 && rows[0].sku) {
+            console.log(`[Local DB] Found SKU '${rows[0].sku}' for ASIN ${asin} in product_listings table.`);
+            return rows[0].sku;
+        }
+    } catch (dbError) {
+        console.error(`[Local DB] Error querying for SKU for ASIN ${asin}:`, dbError);
+        // Don't throw, just log and fall through to the API call.
+    }
+
+    console.log(`[Local DB] No SKU found for ASIN ${asin}. Falling back to SP-API.`);
+    
+    // 2. If not found in DB, fall back to SP-API.
+    const { SP_API_MARKETPLACE_ID, SP_API_SELLER_ID } = process.env;
+
+    if (!SP_API_SELLER_ID || !SP_API_SELLER_ID.startsWith('A')) {
+        throw new Error('Invalid or missing SP_API_SELLER_ID in .env file. It is required to fetch SKU from ASIN via API.');
+    }
+
+    console.log(`[SP-API] Fetching SKU for ASIN: ${asin} using Listings API for Seller: ${SP_API_SELLER_ID}`);
+
+    try {
+        const response = await spApiRequest({
+            method: 'get',
+            url: `/listings/2021-08-01/items/${SP_API_SELLER_ID}`,
+            params: {
+                marketplaceIds: SP_API_MARKETPLACE_ID,
+                identifiers: asin,
+                identifiersType: 'ASIN',
+                includedData: 'summaries' // We only need summaries which includes the SKU.
+            }
+        });
+
+        if (response.listings && Array.isArray(response.listings) && response.listings.length > 0) {
+            const sku = response.listings[0].sku;
+            if (sku) {
+                console.log(`[SP-API] Found SKU '${sku}' for ASIN ${asin} via Listings API.`);
+                return sku;
+            }
+        }
+
+        console.warn(`[SP-API] No listing with a SKU found for ASIN ${asin} in seller account ${SP_API_SELLER_ID} via Listings API.`);
+        return null;
+
+    } catch (error) {
+        console.error(`[SP-API] Error fetching SKU via Listings API for ASIN ${asin}:`, error);
+        let errorMessage = 'Failed to fetch listing item.';
+        try {
+            const parsedError = JSON.parse(error.message);
+            errorMessage = parsedError.errors?.[0]?.message || parsedError.message || errorMessage;
+        } catch (e) {
+            errorMessage = error.message || errorMessage;
+        }
+        throw new Error(`Failed to retrieve SKU for ASIN ${asin} from Listings API. Reason: ${errorMessage}`);
+    }
+}
+
 
 /**
  * Fetches listing information for a given SKU, including sellerId and current price.

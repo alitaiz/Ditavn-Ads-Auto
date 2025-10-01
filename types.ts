@@ -81,11 +81,23 @@ export interface AutomationRuleCondition {
 }
 
 export interface AutomationRuleAction {
-    type: 'adjustBidPercent' | 'increaseBidPercent' | 'decreaseBidPercent' | 'increaseBidAmount' | 'decreaseBidAmount' | 'negateSearchTerm' | 'increaseBudgetPercent' | 'setBudgetAmount';
+    type: 'adjustBidPercent' | 'increaseBidPercent' | 'decreaseBidPercent' | 'increaseBidAmount' | 'decreaseBidAmount' | 'negateSearchTerm' | 'increaseBudgetPercent' | 'setBudgetAmount' | 'CREATE_NEW_CAMPAIGN' | 'ADD_TO_EXISTING_CAMPAIGN';
     value?: number;
-    matchType?: 'NEGATIVE_EXACT' | 'NEGATIVE_PHRASE';
+    matchType?: 'NEGATIVE_EXACT' | 'NEGATIVE_PHRASE' | 'EXACT' | 'PHRASE';
     minBid?: number;
     maxBid?: number;
+    // For Search Term Harvesting
+    newCampaignBudget?: number;
+    targetCampaignId?: string | number;
+    targetAdGroupId?: string | number;
+    bidOption?: {
+        type: 'CPC_MULTIPLIER' | 'CUSTOM_BID';
+        value: number;
+        maxBid?: number;
+    };
+    autoNegate?: boolean;
+    applyBidRuleIds?: (number | string)[];
+    applyBudgetRuleIds?: (number | string)[];
 }
 
 // The structure of a single IF/THEN block within a rule.
@@ -97,7 +109,7 @@ export interface AutomationConditionGroup {
 export interface AutomationRule {
     id: number;
     name: string;
-    rule_type: 'BID_ADJUSTMENT' | 'SEARCH_TERM_AUTOMATION' | 'BUDGET_ACCELERATION' | 'CAMPAIGN_SCHEDULING' | 'PRICE_ADJUSTMENT';
+    rule_type: 'BID_ADJUSTMENT' | 'SEARCH_TERM_AUTOMATION' | 'BUDGET_ACCELERATION' | 'CAMPAIGN_SCHEDULING' | 'PRICE_ADJUSTMENT' | 'SEARCH_TERM_HARVESTING';
     ad_type?: 'SP' | 'SB' | 'SD';
     config: {
         // A rule is composed of one or more condition groups.
@@ -153,14 +165,48 @@ export interface SalesAndTrafficData {
     parentAsin: string;
     childAsin: string;
     sku: string | null;
+    // Sales Metrics
     unitsOrdered?: number;
     orderedProductSales?: number;
-    sessions?: number;
-    pageViews?: number;
-    featuredOfferPercentage?: number;
-    unitSessionPercentage?: number;
     totalOrderItems?: number;
     averageSalesPerOrderItem?: number;
+    // B2B Sales Metrics
+    unitsOrderedB2B?: number;
+    orderedProductSalesB2B?: number;
+    totalOrderItemsB2B?: number;
+    averageSalesPerOrderItemB2B?: number;
+    // Traffic Metrics
+    sessions?: number;
+    pageViews?: number;
+    buyBoxPercentage?: number;
+    unitSessionPercentage?: number;
+    sessionPercentage?: number;
+    pageViewsPercentage?: number;
+    // B2B Traffic Metrics
+    sessionsB2B?: number;
+    pageViewsB2B?: number;
+    buyBoxPercentageB2B?: number;
+    unitSessionPercentageB2B?: number;
+    sessionPercentageB2B?: number;
+    pageViewsPercentageB2B?: number;
+    // Detailed Traffic Breakdowns
+    browserSessions?: number;
+    mobileAppSessions?: number;
+    browserPageViews?: number;
+    mobileAppPageViews?: number;
+    browserSessionPercentage?: number;
+    mobileAppSessionPercentage?: number;
+    browserPageViewsPercentage?: number;
+    mobileAppPageViewsPercentage?: number;
+    // B2B Detailed Traffic Breakdowns
+    browserSessionsB2B?: number;
+    mobileAppSessionsB2B?: number;
+    browserPageViewsB2B?: number;
+    mobileAppPageViewsB2B?: number;
+    browserSessionPercentageB2B?: number;
+    mobileAppSessionPercentageB2B?: number;
+    browserPageViewsPercentageB2B?: number;
+    mobileAppPageViewsPercentageB2B?: number;
 }
 
 export interface SPSearchTermReportData {
@@ -244,6 +290,7 @@ export interface AICopilotCache {
         searchTermData: LoadedDataInfo;
         streamData: LoadedDataInfo;
         salesTrafficData: LoadedDataInfo;
+        searchQueryPerformanceData: LoadedDataInfo;
     };
     chat: {
         conversationId: string | null;
@@ -258,4 +305,51 @@ export interface AppDataCache {
     spSearchTerms: SPSearchTermsCache;
     salesAndTraffic: SalesAndTrafficCache;
     aiCopilot: AICopilotCache;
+}
+
+// --- New types for Search Query Performance View ---
+
+export interface PerformanceChartConfig {
+    type: 'performance';
+    asin: string;
+    searchQuery: string;
+    metricId: string;
+    metricLabel: string;
+    metricFormat: 'number' | 'percent' | 'price';
+}
+
+export type AppChartConfig = PerformanceChartConfig;
+
+export interface QueryPerformanceData {
+    searchQuery: string;
+    searchQueryScore: number;
+    searchQueryVolume: number;
+    impressions: { totalCount: number; asinCount: number; asinShare: number; };
+    clicks: { clickRate: number; totalCount: number; asinCount: number; asinShare: number; totalMedianPrice: string; asinMedianPrice: string; sameDayShippingCount: number; oneDayShippingCount: number; twoDayShippingCount: number; };
+    cartAdds: { cartAddRate: number; totalCount: number; asinCount: number; asinShare: number; totalMedianPrice: string; asinMedianPrice: string; sameDayShippingCount: number; oneDayShippingCount: number; twoDayShippingCount: number; };
+    purchases: { purchaseRate: number; totalCount: number; asinCount: number; asinShare: number; totalMedianPrice: string; asinMedianPrice: string; sameDayShippingCount: number; oneDayShippingCount: number; twoDayShippingCount: number; };
+    hasSPData?: boolean;
+}
+
+export interface PerformanceFilterOptions {
+    asins: string[];
+    weeks: { value: string; label: string }[];
+}
+
+export interface ProductDetails {
+    asin: string;
+    title?: string;
+    price?: string;
+    imageUrl?: string;
+    bulletPoints?: string[];
+    error?: string;
+    rank?: string;
+}
+
+// --- New type for Listings View ---
+export interface ProductListing {
+    id: number;
+    asin: string;
+    sku: string;
+    title: string;
 }

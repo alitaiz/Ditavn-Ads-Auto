@@ -13,6 +13,18 @@ const styles: { [key: string]: React.CSSProperties } = {
         fontSize: '1.5rem',
         color: '#0f1111',
         marginBottom: '15px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px',
+        flexWrap: 'wrap'
+    },
+    dateRange: {
+        fontSize: '1rem',
+        fontWeight: 'normal',
+        color: '#555',
+        backgroundColor: '#e9ecef',
+        padding: '5px 10px',
+        borderRadius: '6px',
     },
     tableContainer: {
         overflowX: 'auto',
@@ -36,7 +48,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     td: {
         padding: '10px 12px',
         borderBottom: '1px solid #ddd',
-        whiteSpace: 'nowrap',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        fontFamily: 'monospace',
+        fontSize: '0.9rem',
     },
     message: {
         padding: '20px',
@@ -45,23 +60,89 @@ const styles: { [key: string]: React.CSSProperties } = {
     },
 };
 
+
+// Helper to format headers for readability (e.g., snake_case or camelCase to Title Case)
+const formatHeader = (header: string) => {
+    return header
+        .replace(/_/g, ' ')
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, (str) => str.toUpperCase());
+};
+
+// Helper to render cell content more intelligently
+const renderCellContent = (value: any, header: string) => {
+    if (value === null || typeof value === 'undefined') {
+        return <i style={{ color: '#999' }}>null</i>;
+    }
+    if (typeof value === 'object') {
+        const replacer = (key: string, val: any) => {
+            if (typeof val === 'number') {
+                const lowerKey = key.toLowerCase();
+                if (lowerKey.includes('rate') || lowerKey.includes('share') || lowerKey.includes('percentage')) {
+                    // It's a percentage value, format it as such.
+                    return `${(val * 100).toFixed(2)}%`;
+                }
+                if (val % 1 !== 0) { // It's a float
+                    const s = String(val);
+                    const decimalPart = s.split('.')[1];
+                    // Only round very long floats to avoid unnecessary changes to prices etc.
+                    if (decimalPart && decimalPart.length > 4) {
+                       return parseFloat(val.toFixed(4));
+                    }
+                }
+            }
+            return val;
+        };
+        return <pre style={{ margin: 0, fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>{JSON.stringify(value, replacer, 2)}</pre>;
+    }
+    if (typeof value === 'number') {
+        const lowerHeader = header.toLowerCase();
+        if (lowerHeader.includes('rate') || lowerHeader.includes('share') || lowerHeader.includes('percentage')) {
+            return `${(value * 100).toFixed(2)}%`;
+        }
+        if (value % 1 !== 0) { // Check if it's a float
+            return value.toFixed(2);
+        }
+        return value.toLocaleString();
+    }
+    // For strings, just display them. This avoids formatting IDs with commas.
+    return String(value);
+};
+
+
 export function DataViewer() {
     const { dataKey } = useParams<{ dataKey: string }>();
     const [data, setData] = useState<any[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [title, setTitle] = useState('Loaded Data');
+    const [dateRange, setDateRange] = useState<{ startDate: string, endDate: string } | null>(null);
 
     useEffect(() => {
         if (dataKey) {
             const jsonData = sessionStorage.getItem(dataKey);
             if (jsonData) {
                 try {
-                    setData(JSON.parse(jsonData));
+                    const storedPayload = JSON.parse(jsonData);
+                    
+                    if (Array.isArray(storedPayload)) {
+                        setData(storedPayload); // Handle old format
+                    } else {
+                        setData(storedPayload.data); // Handle new format
+                        setDateRange(storedPayload.dateRange);
+                    }
+                    
                     sessionStorage.removeItem(dataKey); // Clean up immediately after reading
 
-                    if (dataKey.includes('st')) setTitle('Search Term Report Data');
-                    else if (dataKey.includes('stream')) setTitle('Stream Data');
-                    else if (dataKey.includes('sat')) setTitle('Sales & Traffic Data');
+                    // Set title based on the data key
+                    if (dataKey.includes('sqp')) {
+                        setTitle('Search Query Performance Data');
+                    } else if (dataKey.includes('stream')) {
+                        setTitle('Stream Data');
+                    } else if (dataKey.includes('st')) {
+                        setTitle('Search Term Report Data');
+                    } else if (dataKey.includes('sat')) {
+                        setTitle('Sales & Traffic Data');
+                    }
 
                 } catch (e) {
                     setError('Failed to parse data from storage.');
@@ -71,6 +152,17 @@ export function DataViewer() {
             }
         }
     }, [dataKey]);
+
+    const formatDate = (dateStr: string) => {
+        return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC'
+        });
+    };
+    
+    const formattedDateRange = dateRange
+        ? `${formatDate(dateRange.startDate)} - ${formatDate(dateRange.endDate)}`
+        : '';
+
 
     const renderContent = () => {
         if (error) {
@@ -90,7 +182,7 @@ export function DataViewer() {
                 <table style={styles.table}>
                     <thead>
                         <tr>
-                            {headers.map(header => <th key={header} style={styles.th}>{header.replace(/([A-Z])/g, ' $1')}</th>)}
+                            {headers.map(header => <th key={header} style={styles.th}>{formatHeader(header)}</th>)}
                         </tr>
                     </thead>
                     <tbody>
@@ -98,7 +190,7 @@ export function DataViewer() {
                             <tr key={index}>
                                 {headers.map(header => (
                                     <td key={`${header}-${index}`} style={styles.td}>
-                                        {JSON.stringify(row[header])}
+                                        {renderCellContent(row[header], header)}
                                     </td>
                                 ))}
                             </tr>
@@ -111,7 +203,10 @@ export function DataViewer() {
 
     return (
         <div style={styles.container}>
-            <h1 style={styles.header}>{title}</h1>
+            <div style={styles.header}>
+                <h1>{title}</h1>
+                {formattedDateRange && <span style={styles.dateRange}>{formattedDateRange}</span>}
+            </div>
             {renderContent()}
         </div>
     );
