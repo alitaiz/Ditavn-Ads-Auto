@@ -262,7 +262,15 @@ export function AutomationView() {
   };
 
   const handleSaveRule = async (formData: AutomationRule) => {
-    const { id, ...data } = formData;
+    // Deep copy formData to avoid mutating state, as we'll modify the skus array.
+    const formDataCopy = JSON.parse(JSON.stringify(formData));
+
+    // Clean up the skus array to remove any empty entries from comma-separators before saving.
+    if (formDataCopy.rule_type === 'PRICE_ADJUSTMENT' && formDataCopy.config?.skus) {
+        formDataCopy.config.skus = formDataCopy.config.skus.filter((sku: string) => sku && sku.trim());
+    }
+      
+    const { id, ...data } = formDataCopy;
     const method = id ? 'PUT' : 'POST';
     const url = id ? `/api/automation/rules/${id}` : '/api/automation/rules';
     
@@ -649,7 +657,7 @@ const RuleBuilderModal = ({ rule, modalTitle, onClose, onSave, bidAdjustmentRule
                                     <textarea
                                         style={styles.textarea}
                                         value={(formData.config.skus || []).join(', ')}
-                                        onChange={e => handleConfigChange('skus', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                                        onChange={e => handleConfigChange('skus', e.target.value.split(',').map(s => s.trim()))}
                                         placeholder="SKU-001, SKU-002, SKU-003"
                                         required
                                     />
