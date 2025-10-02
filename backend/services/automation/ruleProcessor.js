@@ -11,11 +11,41 @@ import {
 } from './evaluators/index.js';
 import { isRuleDue, logAction, getLocalDateString } from './utils.js';
 import { amazonAdsApiRequest } from '../../helpers/amazon-api.js';
+import { createAutoCampaignSet } from '../../routes/ppcManagementApi.js'; // Import the new campaign set function
 
 // Define a constant for Amazon's reporting timezone to ensure consistency.
 const REPORTING_TIMEZONE = 'America/Los_Angeles';
 
 let isProcessing = false; // Global lock to prevent overlapping cron jobs
+
+const processCampaignCreationRule = async (rule) => {
+    console.log(`[RulesEngine] ⚙️  Processing CAMPAIGN CREATION rule "${rule.name}" (ID: ${rule.id}).`);
+    const { asin, budget, defaultBid, placementBids } = rule.creation_parameters;
+    const associatedRuleIds = rule.associated_rule_ids || [];
+
+    if (!placementBids) {
+        console.error(`[RulesEngine] ❌ Skipping campaign creation rule ${rule.id}: Missing placementBids. This may be an old rule format.`);
+        await logAction(rule, 'FAILURE', `Campaign creation failed for ASIN ${asin}.`, { error: 'Rule format is outdated; missing placementBids.' });
+        return; // Skip execution of old-format rules
+    }
+    
+    try {
+        const result = await createAutoCampaignSet(rule.profile_id, asin, budget, defaultBid, placementBids, associatedRuleIds);
+        
+        const summary = `Successfully created a set of ${result.createdCampaigns.length} campaigns from schedule for ASIN ${asin}.`;
+        await logAction(rule, 'SUCCESS', summary, {
+            createdCampaigns: result.createdCampaigns,
+            rulesAssociated: result.rulesAssociated,
+        });
+
+    } catch (error) {
+        console.error(`[RulesEngine] ❌ Error processing campaign creation rule ${rule.id}:`, error);
+        await logAction(rule, 'FAILURE', `Campaign set creation failed for ASIN ${asin}.`, { error: error.message });
+    } finally {
+        await pool.query('UPDATE campaign_creation_rules SET last_run_at = NOW() WHERE id = $1', [rule.id]);
+    }
+};
+
 
 const processRule = async (rule) => {
     console.log(`[RulesEngine] ⚙️  Processing rule "${rule.name}" (ID: ${rule.id}).`);
@@ -115,6 +145,7 @@ export const checkAndRunDueRules = async () => {
     isProcessing = true; // Set the lock
 
     try {
+        // --- Process Standard Automation Rules ---
         const { rows: activeRules } = await pool.query('SELECT * FROM automation_rules WHERE is_active = TRUE');
         
         const normalizedRules = activeRules.map(rule => {
@@ -132,13 +163,27 @@ export const checkAndRunDueRules = async () => {
         const dueRules = normalizedRules.filter(isRuleDue);
 
         if (dueRules.length === 0) {
-            console.log('[RulesEngine] No rules are due to run at this time.');
+            console.log('[RulesEngine] No standard automation rules are due to run.');
         } else {
-            console.log(`[RulesEngine] Found ${dueRules.length} rule(s) to run: ${dueRules.map(r => r.name).join(', ')}`);
+            console.log(`[RulesEngine] Found ${dueRules.length} standard rule(s) to run: ${dueRules.map(r => r.name).join(', ')}`);
             for (const rule of dueRules) {
                 await processRule(rule);
             }
         }
+        
+        // --- Process Campaign Creation Rules ---
+        const { rows: activeCreationRules } = await pool.query('SELECT * FROM campaign_creation_rules WHERE is_active = TRUE');
+        const dueCreationRules = activeCreationRules.filter(isRuleDue);
+
+        if (dueCreationRules.length === 0) {
+            console.log('[RulesEngine] No campaign creation schedules are due to run.');
+        } else {
+            console.log(`[RulesEngine] Found ${dueCreationRules.length} campaign creation schedule(s) to run: ${dueCreationRules.map(r => r.name).join(', ')}`);
+            for (const rule of dueCreationRules) {
+                await processCampaignCreationRule(rule);
+            }
+        }
+
     } catch (e) {
         console.error('[RulesEngine] CRITICAL: Failed to fetch or process rules.', e);
     } finally {
