@@ -37,6 +37,6 @@ CREATE INDEX IF NOT EXISTS idx_sat_asin_child_asin ON sales_and_traffic_by_asin(
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sales_and_traffic_by_date, sales_and_traffic_by_asin TO yourdbuser;
-GRANT USAGE, SELECT ON SEQUENCE sales_and_traffic_by_asin_id_seq TO yourdbuser;
+-- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sales_and_traffic_by_date, sales_and_traffic_by_asin TO ditavn;
+GRANT USAGE, SELECT ON SEQUENCE sales_and_traffic_by_asin_id_seq TO ditavn;

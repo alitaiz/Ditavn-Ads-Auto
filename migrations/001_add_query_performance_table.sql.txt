@@ -27,6 +27,6 @@ CREATE INDEX IF NOT EXISTS idx_qpd_search_query ON query_performance_data(search
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE query_performance_data TO yourdbuser;
-GRANT USAGE, SELECT ON SEQUENCE query_performance_data_id_seq TO yourdbuser;
+-- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE query_performance_data TO ditavn;
+GRANT USAGE, SELECT ON SEQUENCE query_performance_data_id_seq TO ditavn;
