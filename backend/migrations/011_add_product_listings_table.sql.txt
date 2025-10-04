@@ -35,6 +35,6 @@ CREATE INDEX IF NOT EXISTS idx_pl_sku ON product_listings(sku);
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE product_listings TO yourdbuser;
-GRANT USAGE, SELECT ON SEQUENCE product_listings_id_seq TO yourdbuser;
+-- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE product_listings TO ditavn;
+GRANT USAGE, SELECT ON SEQUENCE product_listings_id_seq TO ditavn;

@@ -44,6 +44,6 @@ CREATE INDEX IF NOT EXISTS idx_report_requests_report_date ON report_requests(re
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE report_requests TO yourdbuser;
-GRANT USAGE, SELECT ON SEQUENCE report_requests_id_seq TO yourdbuser;
+-- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE report_requests TO ditavn;
+GRANT USAGE, SELECT ON SEQUENCE report_requests_id_seq TO ditavn;
