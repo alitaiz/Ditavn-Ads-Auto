@@ -47,6 +47,6 @@ UNIQUE (report_date, campaign_id, ad_group_id, target_id);
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sponsored_display_targeting_report TO ditavn;
-GRANT USAGE, SELECT ON SEQUENCE sponsored_display_targeting_report_id_seq TO ditavn;
+-- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE sponsored_display_targeting_report TO yourdbuser;
+GRANT USAGE, SELECT ON SEQUENCE sponsored_display_targeting_report_id_seq TO yourdbuser;

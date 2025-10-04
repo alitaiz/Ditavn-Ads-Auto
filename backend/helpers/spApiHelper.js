@@ -232,3 +232,68 @@ export async function updatePrice(sku, newPrice, sellerId) {
     console.log(`[SP-API] Successfully submitted price update for SKU ${sku}. Status: ${result.status}`);
     return result;
 }
+
+/**
+ * Fetches product title and bullet points for a list of ASINs.
+ * Handles batching and uppercasing to conform to API requirements.
+ * @param {string[]} asinList An array of ASIN strings.
+ * @returns {Promise<Array<{asin: string, title: string, bulletPoints: string[]}>>}
+ */
+export async function getProductTextAttributes(asinList) {
+    const marketplaceId = process.env.SP_API_MARKETPLACE_ID;
+    if (!marketplaceId) {
+        throw new Error('SP_API_MARKETPLACE_ID is not configured.');
+    }
+
+    const detailsMap = new Map();
+    // Use uppercase for map keys, but store original casing in the value object.
+    asinList.forEach(asin => {
+        if (asin && typeof asin === 'string') {
+            detailsMap.set(asin.toUpperCase(), { asin, title: '', bulletPoints: [] });
+        }
+    });
+
+    // Create a list of unique, uppercase ASINs for the API call
+    const uppercaseAsinList = [...new Set(asinList.filter(Boolean).map(asin => asin.toUpperCase()))];
+    const BATCH_SIZE = 20;
+    const allItems = [];
+
+    for (let i = 0; i < uppercaseAsinList.length; i += BATCH_SIZE) {
+        const batch = uppercaseAsinList.slice(i, i + BATCH_SIZE);
+        console.log(`[SP-API Helper] Fetching product attributes for batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(uppercaseAsinList.length / BATCH_SIZE)}...`);
+        try {
+            const catalogResponse = await spApiRequest({
+                method: 'get',
+                url: `/catalog/2022-04-01/items`,
+                params: {
+                    marketplaceIds: marketplaceId,
+                    identifiers: batch.join(','),
+                    identifiersType: 'ASIN',
+                    includedData: 'attributes,summaries' // attributes for text, summaries for title fallback
+                }
+            });
+
+            if (catalogResponse?.items) {
+                allItems.push(...catalogResponse.items);
+            }
+        } catch (error) {
+            // Log the error for the specific batch but continue with other batches
+            console.error(`[SP-API Helper] Failed to get product attributes for batch starting with ASIN ${batch[0]}:`, error);
+        }
+        // Small delay to respect rate limits, especially if running many batches.
+        await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    if (allItems.length > 0) {
+        for (const item of allItems) {
+            // The API returns uppercase ASINs.
+            const detail = detailsMap.get(item.asin);
+            if (detail) { // Check if we have an entry for this ASIN
+                detail.title = item.attributes?.item_name?.[0]?.value || item.summaries?.[0]?.itemName || 'Title Not Found';
+                detail.bulletPoints = item.attributes?.bullet_point?.map(bp => bp.value) || [];
+            }
+        }
+    }
+    
+    return Array.from(detailsMap.values());
+}

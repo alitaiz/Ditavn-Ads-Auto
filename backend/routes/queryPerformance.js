@@ -296,7 +296,7 @@ router.get('/query-performance-history', async (req, res) => {
                 date_trunc('week', report_date + interval '1 day')::date - interval '1 day' as week_start_date,
                 SUM(impressions)::int as sp_impressions,
                 SUM(clicks)::int as sp_clicks,
-                SUM(purchases_7d)::int as sp_orders
+                SUM(seven_day_total_orders)::int as sp_orders
             FROM sponsored_products_search_term_report
             WHERE customer_search_term = $1
               AND report_date BETWEEN $2 AND $3

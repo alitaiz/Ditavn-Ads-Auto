@@ -46,6 +46,6 @@ CREATE INDEX IF NOT EXISTS idx_ccr_is_active ON campaign_creation_rules(is_activ
 -- =============================================================================
 -- Grant Permissions to Application User
 -- =============================================================================
--- IMPORTANT: Replace 'ditavn' with the actual DB_USER from your .env file.
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE campaign_creation_rules TO ditavn;
-GRANT USAGE, SELECT ON SEQUENCE campaign_creation_rules_id_seq TO ditavn;
+-- IMPORTANT: Replace 'yourdbuser' with the actual DB_USER from your .env file.
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE campaign_creation_rules TO yourdbuser;
+GRANT USAGE, SELECT ON SEQUENCE campaign_creation_rules_id_seq TO yourdbuser;
